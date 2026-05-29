@@ -638,10 +638,11 @@ export async function getTopCandidates({ limit = 10 } = {}) {
         ]);
 
         const mintShort = p.base.mint.slice(0, 8);
-        if (adv.status !== "fulfilled")      log("okx", `advanced-info unavailable for ${p.name} (${mintShort})`);
-        if (price.status !== "fulfilled")    log("okx", `price-info unavailable for ${p.name} (${mintShort})`);
-        if (clusters.status !== "fulfilled") log("okx", `cluster-list unavailable for ${p.name} (${mintShort})`);
-        if (risk.status !== "fulfilled")     log("okx", `risk-check unavailable for ${p.name} (${mintShort})`);
+        const why = (settled) => settled.reason?.message || settled.reason || "no reason";
+        if (adv.status !== "fulfilled")      log("okx", `advanced-info unavailable for ${p.name} (${mintShort}): ${why(adv)}`);
+        if (price.status !== "fulfilled")    log("okx", `price-info unavailable for ${p.name} (${mintShort}): ${why(price)}`);
+        if (clusters.status !== "fulfilled") log("okx", `cluster-list unavailable for ${p.name} (${mintShort}): ${why(clusters)}`);
+        if (risk.status !== "fulfilled")     log("okx", `risk-check unavailable for ${p.name} (${mintShort}): ${why(risk)}`);
 
         return {
           adv: adv.status === "fulfilled" ? adv.value : null,
