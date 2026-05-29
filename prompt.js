@@ -13,13 +13,17 @@ import { config } from "./config.js";
 
 export function buildSystemPrompt(agentType, portfolio, positions, stateSummary = null, lessons = null, perfSummary = null, weightsSummary = null, decisionSummary = null) {
   const s = config.screening;
+  const isDryRun = process.env.DRY_RUN === "true";
+  const dryRunNotice = isDryRun
+    ? `\nDRY-RUN MODE: DRY_RUN=true. Every on-chain tool (deploy_position, close_position, claim_fees, swap_token) returns immediately with { dry_run: true, would_*: ... } WITHOUT touching the chain. When you see dry_run: true in a tool result, your final answer MUST clearly label the outcome as a simulation (e.g. "DRY RUN — would have deployed", "SIMULATED CLOSE"). Never present a dry_run result as a completed action or use celebratory language like "🚀 DEPLOYED" or "✅ Closed". State that no transaction was sent.\n`
+    : "";
 
   // MANAGER gets a leaner prompt — positions are pre-loaded in the goal, not repeated here
   if (agentType === "MANAGER") {
     const portfolioCompact = JSON.stringify(portfolio);
     const mgmtConfig = JSON.stringify(config.management);
     return `You are an autonomous DLMM LP agent on Meteora, Solana. Role: MANAGER
-
+${dryRunNotice}
 This is a mechanical rule-application task. All position data is pre-loaded. Apply the close/claim rules directly and output the report. No extended analysis or deliberation required.
 
 Portfolio: ${portfolioCompact}
@@ -36,7 +40,7 @@ ${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOS
 
   let basePrompt = `You are an autonomous DLMM LP (Liquidity Provider) agent operating on Meteora, Solana.
 Role: ${agentType || "GENERAL"}
-
+${dryRunNotice}
 ═══════════════════════════════════════════
  CURRENT STATE
 ═══════════════════════════════════════════

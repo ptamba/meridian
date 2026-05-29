@@ -698,7 +698,10 @@ export async function executeTool(name, args) {
       success,
     });
 
-    if (success) {
+    // Suppress Telegram notifications, auto-swap, and pool-memory side effects on
+    // dry-run results — nothing actually happened on-chain, so the user shouldn't
+    // get a "Deployed"/"Closed"/"Swapped" alert that implies it did.
+    if (success && !result?.dry_run) {
       if (name === "swap_token" && result.tx) {
         notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
       } else if (name === "deploy_position") {
