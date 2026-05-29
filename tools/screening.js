@@ -80,7 +80,19 @@ function getVolatilityTimeframe(sourceTimeframe) {
   return sourceMinutes != null && sourceMinutes >= minMinutes ? source : MIN_VOLATILITY_TIMEFRAME;
 }
 
-function getRawPoolScreeningRejectReason(pool, s) {
+/**
+ * Returns null if the pool passes the pure-pool screening gates (TVL, fee/active-TVL,
+ * volatility, mcap, holders, volume, bin step, organic, launchpad, age, concentration
+ * flags). Returns a short string reason if the pool fails.
+ *
+ * Exported so the deploy-time validator can re-apply the exact same gates a candidate
+ * passed at screening time, catching pools that drifted between candidate generation
+ * and deploy execution (e.g. active TVL collapsed, OOR, fee yield dropped).
+ *
+ * Note: OKX/Jupiter-audit checks (bundle %, top10 %, bot %, wash, ATH) are applied
+ * separately on the enriched candidate later in the pipeline — not here.
+ */
+export function getRawPoolScreeningRejectReason(pool, s) {
   const base = pool?.token_x || {};
   const quote = pool?.token_y || {};
   const binStep = numeric(pool?.dlmm_params?.bin_step);

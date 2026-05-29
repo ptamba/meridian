@@ -1,4 +1,9 @@
-import { discoverPools, getPoolDetail, getTopCandidates } from "./screening.js";
+import {
+  discoverPools,
+  getPoolDetail,
+  getTopCandidates,
+  getRawPoolScreeningRejectReason,
+} from "./screening.js";
 import {
   getActiveBin,
   deployPosition,
@@ -80,6 +85,74 @@ async function fetchFreshPoolDetail(poolAddress, timeframe = config.screening.ti
   if (!res.ok) throw new Error(`Pool Discovery API error: ${res.status} ${res.statusText}`);
   const data = await res.json();
   return (data?.data || [])[0] ?? null;
+}
+
+/**
+ * Re-apply the OKX advanced-info + risk-flag + price-info checks and the Jupiter
+ * audit checks that the screener would have run at candidate-generation time.
+ *
+ * Tolerant of upstream API failures: if an API call fails or returns no data, the
+ * specific gate(s) that depend on it are skipped (logged, not enforced) — same
+ * policy as the screening cycle. Only rejects when data is present AND fails.
+ */
+async function revalidateOkxAndAuditGates(detail, s) {
+  const baseMint = detail?.token_x?.address;
+  if (!baseMint) return { pass: true };
+
+  const { getAdvancedInfo, getRiskFlags, getPriceInfo } = await import("./okx.js");
+
+  const [advRes, riskRes, priceRes, infoRes] = await Promise.allSettled([
+    getAdvancedInfo(baseMint),
+    getRiskFlags(baseMint),
+    getPriceInfo(baseMint),
+    getTokenInfo({ query: baseMint }),
+  ]);
+  const adv   = advRes.status   === "fulfilled" ? advRes.value   : null;
+  const risk  = riskRes.status  === "fulfilled" ? riskRes.value  : null;
+  const price = priceRes.status === "fulfilled" ? priceRes.value : null;
+  const info  = infoRes.status  === "fulfilled" ? infoRes.value?.results?.[0] || null : null;
+
+  // OKX wash trading — hard reject when flagged (matches screening.js:673-680)
+  if (risk?.is_wash) {
+    return { pass: false, reason: "wash trading flagged by OKX" };
+  }
+
+  // OKX bundle %
+  const bundlePct = numberOrNull(adv?.bundle_pct);
+  if (bundlePct != null && s.maxBundlePct != null && bundlePct > s.maxBundlePct) {
+    return { pass: false, reason: `bundle holdings ${bundlePct}% > maxBundlePct ${s.maxBundlePct}%` };
+  }
+
+  // OKX ATH filter (only when athFilterPct is configured)
+  if (s.athFilterPct != null) {
+    const pctOfAth = numberOrNull(price?.price_vs_ath_pct);
+    if (pctOfAth != null) {
+      const threshold = 100 + Number(s.athFilterPct);
+      if (pctOfAth > threshold) {
+        return { pass: false, reason: `${pctOfAth}% of ATH > ${threshold}% limit` };
+      }
+    }
+  }
+
+  // Jupiter audit bot holders % — this is the gate that fired for PAYNE-SOL
+  const botPct = numberOrNull(info?.audit?.bot_holders_pct);
+  if (botPct != null && s.maxBotHoldersPct != null && botPct > s.maxBotHoldersPct) {
+    return { pass: false, reason: `bot holders ${botPct}% > maxBotHoldersPct ${s.maxBotHoldersPct}%` };
+  }
+
+  // Jupiter audit top-10 holders %
+  const top10Pct = numberOrNull(info?.audit?.top_holders_pct);
+  if (top10Pct != null && s.maxTop10Pct != null && top10Pct > s.maxTop10Pct) {
+    return { pass: false, reason: `top10 holders ${top10Pct}% > maxTop10Pct ${s.maxTop10Pct}%` };
+  }
+
+  // Jupiter audit minTokenFeesSol (global lifetime fees paid)
+  const globalFeesSol = numberOrNull(info?.global_fees_sol);
+  if (globalFeesSol != null && s.minTokenFeesSol != null && globalFeesSol < s.minTokenFeesSol) {
+    return { pass: false, reason: `token global fees ${globalFeesSol} SOL < minTokenFeesSol ${s.minTokenFeesSol}` };
+  }
+
+  return { pass: true };
 }
 
 async function validateDeployPoolThresholds(args) {
@@ -164,6 +237,37 @@ async function validateDeployPoolThresholds(args) {
       pass: false,
       reason: `Pool bin_step ${actualBinStep} is above configured maxBinStep ${maxStep}.`,
     };
+  }
+
+  // ── Re-apply the full screening pool-gate set ────────────────────────────
+  // Candidate data the LLM reasoned with can be 30-120s stale by the time
+  // deploy_position fires (model latency, especially on thinking-mode models).
+  // Catches pools that no longer pass mcap/holders/volume/organic/launchpad/age
+  // even though TVL/fee/binstep still look fine.
+  const poolGateReason = getRawPoolScreeningRejectReason(detail, config.screening);
+  if (poolGateReason) {
+    return {
+      pass: false,
+      reason: `Pool no longer passes screening: ${poolGateReason}`,
+    };
+  }
+
+  // ── Re-apply OKX + Jupiter-audit gates ───────────────────────────────────
+  // These were applied after candidate generation but are not re-checked here
+  // by default. A candidate with fresh bot %, top10, or wash-trading flips is
+  // a real signal that screening would now reject it.
+  try {
+    const okxGate = await revalidateOkxAndAuditGates(detail, config.screening);
+    if (!okxGate.pass) {
+      return {
+        pass: false,
+        reason: `Pool no longer passes screening: ${okxGate.reason}`,
+      };
+    }
+  } catch (error) {
+    // Upstream APIs are flaky — never let an enrichment failure block a deploy
+    // that has already cleared the on-chain pool-level gates.
+    log("safety_warn", `OKX/audit recheck skipped (upstream failure): ${error.message}`);
   }
 
   return { pass: true };
