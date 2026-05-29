@@ -900,33 +900,53 @@ function getDeterministicCloseRule(position, managementConfig) {
     return false;
   })();
 
+  const oorWaitUp     = managementConfig.outOfRangeWaitMinutesUp    ?? managementConfig.outOfRangeWaitMinutes;
+  const oorWaitDown   = managementConfig.outOfRangeWaitMinutesDown  ?? managementConfig.outOfRangeWaitMinutes;
+  const oorBinsCloseUp   = managementConfig.outOfRangeBinsToCloseUp   ?? managementConfig.outOfRangeBinsToClose;
+  const oorBinsCloseDown = managementConfig.outOfRangeBinsToCloseDown ?? managementConfig.outOfRangeBinsToClose;
+
   if (!pnlSuspect && position.pnl_pct != null && position.pnl_pct <= managementConfig.stopLossPct) {
-    return { action: "CLOSE", rule: 1, reason: "stop loss" };
+    return { action: "CLOSE", rule: 1, tag: "stop_loss", reason: "stop loss" };
   }
   if (!pnlSuspect && position.pnl_pct != null && position.pnl_pct >= managementConfig.takeProfitPct) {
-    return { action: "CLOSE", rule: 2, reason: "take profit" };
+    return { action: "CLOSE", rule: 2, tag: "take_profit", reason: "take profit" };
   }
   if (
     position.active_bin != null &&
     position.upper_bin != null &&
-    position.active_bin > position.upper_bin + managementConfig.outOfRangeBinsToClose
+    position.active_bin > position.upper_bin + oorBinsCloseUp
   ) {
-    return { action: "CLOSE", rule: 3, reason: "pumped far above range" };
+    return { action: "CLOSE", rule: 3, tag: "pumped_above_range", reason: "pumped far above range" };
   }
   if (
     position.active_bin != null &&
     position.upper_bin != null &&
     position.active_bin > position.upper_bin &&
-    (position.minutes_out_of_range ?? 0) >= managementConfig.outOfRangeWaitMinutes
+    (position.minutes_out_of_range ?? 0) >= oorWaitUp
   ) {
-    return { action: "CLOSE", rule: 4, reason: "OOR" };
+    return { action: "CLOSE", rule: 4, tag: "oor_upside", reason: `OOR upside (${oorWaitUp}m)` };
+  }
+  if (
+    position.active_bin != null &&
+    position.lower_bin != null &&
+    position.active_bin < position.lower_bin - oorBinsCloseDown
+  ) {
+    return { action: "CLOSE", rule: 6, tag: "dumped_below_range", reason: "dumped far below range" };
+  }
+  if (
+    position.active_bin != null &&
+    position.lower_bin != null &&
+    position.active_bin < position.lower_bin &&
+    (position.minutes_out_of_range ?? 0) >= oorWaitDown
+  ) {
+    return { action: "CLOSE", rule: 7, tag: "oor_downside", reason: `OOR downside (${oorWaitDown}m)` };
   }
   if (
     position.fee_per_tvl_24h != null &&
     position.fee_per_tvl_24h < managementConfig.minFeePerTvl24h &&
-    (position.age_minutes ?? 0) >= 60
+    (position.age_minutes ?? 0) >= managementConfig.minAgeBeforeYieldCheck
   ) {
-    return { action: "CLOSE", rule: 5, reason: "low yield" };
+    return { action: "CLOSE", rule: 5, tag: "low_yield", reason: "low yield" };
   }
   return null;
 }

@@ -56,6 +56,34 @@ function save(data) {
   fs.writeFileSync(LESSONS_FILE, JSON.stringify(data, null, 2));
 }
 
+/**
+ * Classify a free-text close reason into a machine-readable tag.
+ *
+ * The LLM tends to paraphrase the deterministic rule's reason (e.g. emitting
+ * "Take profit: PnL +5.03% hit take profit threshold of 5%" instead of just
+ * "take profit"). This collapses those variations to a stable enum so analytics
+ * can group/filter cleanly.
+ *
+ * If the executor was given an explicit close_reason_tag (from
+ * getDeterministicCloseRule), that wins. This is the fallback.
+ */
+export function classifyCloseReason(reasonText) {
+  const t = String(reasonText || "").toLowerCase();
+  if (!t) return "agent_decision";
+  if (/\bstop[\s_-]?loss\b|\bsl\b/.test(t))                            return "stop_loss";
+  if (/\btake[\s_-]?profit\b|\btp\b/.test(t))                          return "take_profit";
+  if (/pumped|above range|rule 3|run.*up.*range/.test(t))              return "pumped_above_range";
+  if (/dumped|below range|rule 6/.test(t))                             return "dumped_below_range";
+  if (/oor.*upside|out.of.range.*up|upside/.test(t))                   return "oor_upside";
+  if (/oor.*downside|out.of.range.*down|downside/.test(t))             return "oor_downside";
+  if (/trailing/.test(t))                                              return "trailing_tp";
+  if (/oor|out.of.range|range/.test(t))                                return "oor_upside";   // legacy single-direction OOR was always upside in this strategy
+  if (/low.yield|fee.{0,5}tvl/.test(t))                                return "low_yield";
+  if (/wash|rugpull|rug/.test(t))                                      return "rug_filter";
+  if (/manual|user|telegram/.test(t))                                  return "manual";
+  return "agent_decision";
+}
+
 function buildSignalSnapshot(perf) {
   const snapshot = { ...(perf.signal_snapshot || {}) };
   if (perf.base_mint && snapshot.base_mint == null) snapshot.base_mint = perf.base_mint;
@@ -134,6 +162,7 @@ export async function recordPerformance(perf) {
   const entry = {
     ...perf,
     signal_snapshot: signalSnapshot,
+    close_reason_tag: perf.close_reason_tag || classifyCloseReason(perf.close_reason),
     pnl_usd: Math.round(pnl_usd * 100) / 100,
     pnl_pct: Math.round(pnl_pct * 100) / 100,
     range_efficiency: Math.round(range_efficiency * 10) / 10,

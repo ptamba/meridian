@@ -104,6 +104,14 @@ export const config = {
     autoSwapAfterClaim:    u.autoSwapAfterClaim    ?? false,
     outOfRangeBinsToClose: u.outOfRangeBinsToClose ?? 10,
     outOfRangeWaitMinutes: u.outOfRangeWaitMinutes ?? 30,
+    // Asymmetric OOR — bid-ask single-side SOL has different upside vs downside dynamics:
+    // upside OOR (price ran up) is often temporary — pumps can retrace into range. Wait longer.
+    // downside OOR (price fell through range) usually means the strategy failed; exit faster.
+    // Each key falls back to outOfRangeWaitMinutes / outOfRangeBinsToClose when unset.
+    outOfRangeWaitMinutesUp:    u.outOfRangeWaitMinutesUp    ?? u.outOfRangeWaitMinutes    ?? 30,
+    outOfRangeWaitMinutesDown:  u.outOfRangeWaitMinutesDown  ?? u.outOfRangeWaitMinutes    ?? 30,
+    outOfRangeBinsToCloseUp:    u.outOfRangeBinsToCloseUp    ?? u.outOfRangeBinsToClose    ?? 10,
+    outOfRangeBinsToCloseDown:  u.outOfRangeBinsToCloseDown  ?? u.outOfRangeBinsToClose    ?? 10,
     oorCooldownTriggerCount: u.oorCooldownTriggerCount ?? 3,
     oorCooldownHours:       u.oorCooldownHours       ?? 12,
     repeatDeployCooldownEnabled: u.repeatDeployCooldownEnabled ?? true,
