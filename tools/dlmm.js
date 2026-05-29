@@ -899,33 +899,60 @@ let _positionsCacheAt = 0;
 let _positionsInflight = null; // deduplicates concurrent calls
 const LPAGENT_API = "https://api.lpagent.io/open-api/v1";
 
+// Short cache to absorb the common pattern of multiple getMyPositions({ force: true })
+// calls within a few hundred ms (e.g. management cycle → screening trigger).
+// LPAgent free-tier rate limits are tight and PnL freshness within 30s is irrelevant
+// for management decisions.
+const LPAGENT_CACHE_TTL_MS = Number(process.env.LPAGENT_CACHE_TTL_MS ?? 30_000);
+const _lpAgentCache = new Map(); // walletAddress -> { at: number, payload: object }
+const _lpAgentInflight = new Map(); // walletAddress -> Promise<object>
+
 async function fetchLpAgentOpenPositions(walletAddress) {
   if (!process.env.LPAGENT_API_KEY) return {};
 
-  const url = `${LPAGENT_API}/lp-positions/opening?owner=${walletAddress}`;
-  try {
-    const res = await fetch(url, {
-      headers: {
-        "x-api-key": process.env.LPAGENT_API_KEY,
-      },
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      log("lpagent_api", `HTTP ${res.status} for owner ${walletAddress.slice(0, 8)}: ${body.slice(0, 160)}`);
-      return {};
-    }
-    const data = await res.json();
-    const positions = data?.data || [];
-    const byAddress = {};
-    for (const p of positions) {
-      const addr = p.position || p.id || p.tokenId;
-      if (addr) byAddress[addr] = p;
-    }
-    return byAddress;
-  } catch (e) {
-    log("lpagent_api", `Fetch error for owner ${walletAddress.slice(0, 8)}: ${e.message}`);
-    return {};
+  const cached = _lpAgentCache.get(walletAddress);
+  if (cached && Date.now() - cached.at < LPAGENT_CACHE_TTL_MS) {
+    return cached.payload;
   }
+
+  // Dedup concurrent fetches for the same wallet so a burst of getMyPositions
+  // calls collapses into a single LPAgent request.
+  const inflight = _lpAgentInflight.get(walletAddress);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    const url = `${LPAGENT_API}/lp-positions/opening?owner=${walletAddress}`;
+    try {
+      const res = await fetch(url, {
+        headers: { "x-api-key": process.env.LPAGENT_API_KEY },
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        log("lpagent_api", `HTTP ${res.status} for owner ${walletAddress.slice(0, 8)}: ${body.slice(0, 160)}`);
+        // Cache an empty payload on 429 so we don't hammer it again for the TTL window
+        const empty = {};
+        if (res.status === 429) _lpAgentCache.set(walletAddress, { at: Date.now(), payload: empty });
+        return empty;
+      }
+      const data = await res.json();
+      const positions = data?.data || [];
+      const byAddress = {};
+      for (const p of positions) {
+        const addr = p.position || p.id || p.tokenId;
+        if (addr) byAddress[addr] = p;
+      }
+      _lpAgentCache.set(walletAddress, { at: Date.now(), payload: byAddress });
+      return byAddress;
+    } catch (e) {
+      log("lpagent_api", `Fetch error for owner ${walletAddress.slice(0, 8)}: ${e.message}`);
+      return {};
+    } finally {
+      _lpAgentInflight.delete(walletAddress);
+    }
+  })();
+
+  _lpAgentInflight.set(walletAddress, promise);
+  return promise;
 }
 
 // ─── Fetch DLMM PnL API for all positions in a pool ────────────
