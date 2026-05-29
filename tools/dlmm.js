@@ -1146,9 +1146,17 @@ function deriveLpAgentPnlPct(lpData, solMode = false) {
   const deposit = solMode ? safeNum(lpData.inputNative) : safeNum(lpData.inputValue);
   if (deposit <= 0) return null;
 
-  const currentValue = solMode ? safeNum(lpData.valueNative) : safeNum(lpData.value);
-  const unclaimedFees = solMode ? safeNum(lpData.unCollectedFeeNative) : safeNum(lpData.unCollectedFee);
-  const pnl = currentValue + unclaimedFees - deposit;
+  const currentValue   = solMode ? safeNum(lpData.valueNative)            : safeNum(lpData.value);
+  const unclaimedFees  = solMode ? safeNum(lpData.unCollectedFeeNative)   : safeNum(lpData.unCollectedFee);
+  // Include already-realized cash flows so the derivation matches LPAgent's own
+  // pnl.percent. Omitting these caused the [POSITIONS_WARN] "Suspicious pnl_pct"
+  // warning whenever the position had been claimed (or partially withdrawn): the
+  // derived PnL would be deposit-relative-to-position-only while the reported
+  // PnL included the claimed flows.
+  const collectedFees    = solMode ? safeNum(lpData.collectedFeeNative)    : safeNum(lpData.collectedFee);
+  const withdrawn        = solMode ? safeNum(lpData.outputNative)          : safeNum(lpData.outputValue);
+  const collectedRewards = solMode ? safeNum(lpData.collectedRewardNative) : safeNum(lpData.collectedReward);
+  const pnl = currentValue + unclaimedFees + collectedFees + withdrawn + collectedRewards - deposit;
   return (pnl / deposit) * 100;
 }
 
