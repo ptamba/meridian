@@ -51,12 +51,6 @@ function buildAuthHeaders(method, path, body = "") {
   return headers;
 }
 
-let _okxDebugLogged = false;
-function maskValue(v) {
-  if (!v) return "EMPTY";
-  return `${String(v).slice(0, 6)}...(${String(v).length} chars)`;
-}
-
 async function okxRequest(method, path, body = null) {
   const bodyText = body == null ? "" : JSON.stringify(body);
   const authed = hasAuth();
@@ -64,22 +58,6 @@ async function okxRequest(method, path, body = null) {
   const headers = authed
     ? { ...buildAuthHeaders(method, path, bodyText), ...(body != null ? { "Content-Type": "application/json" } : {}) }
     : { ...PUBLIC_HEADERS, ...(body != null ? { "Content-Type": "application/json" } : {}) };
-
-  if (authed && !_okxDebugLogged) {
-    _okxDebugLogged = true;
-    const ts = headers["OK-ACCESS-TIMESTAMP"];
-    // eslint-disable-next-line no-console
-    console.log("[OKX_DEBUG one-shot]",
-      "method=", method,
-      "path=", path,
-      "ts=", ts,
-      "OK-ACCESS-KEY=", maskValue(headers["OK-ACCESS-KEY"]),
-      "OK-ACCESS-SIGN=", maskValue(headers["OK-ACCESS-SIGN"]),
-      "OK-ACCESS-PASSPHRASE=", maskValue(headers["OK-ACCESS-PASSPHRASE"]),
-      "OK-ACCESS-PROJECT=", maskValue(headers["OK-ACCESS-PROJECT"]),
-      "prehash_len=", `${ts.length}+${method.length}+${path.length}+${bodyText.length}=${ts.length + method.length + path.length + bodyText.length}`,
-    );
-  }
 
   const res = await fetch(`${BASE}${path}`, {
     method,
