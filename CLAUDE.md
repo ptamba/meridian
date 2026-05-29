@@ -223,6 +223,19 @@ Agent Meridian HiveMind sync is handled by `hivemind.js`. **Opt-in**: disabled u
 
 ---
 
+## DRY_RUN Mode
+
+`DRY_RUN=true` skips on-chain transactions — it is **not** paper trading.
+
+- `deploy_position`, `close_position`, `claim_fees`, `swap_token` early-return `{ dry_run: true, would_*: ... }` before signing/sending. No position lands on-chain, `trackPosition()` is not called, `state.json` stays empty.
+- Management cycle queries Meteora portfolio API → always returns 0 positions → TP/SL/OOR/trailing rules never evaluate in dry-run.
+- Telegram notifications (`notifyDeploy`, `notifyClose`, `notifySwap`) are gated on `!result.dry_run` so no fake "✅ Deployed" alerts hit the channel (`tools/executor.js`).
+- All system prompts (`prompt.js`) get a prominent DRY-RUN block injected when the flag is set: the LLM is required to label outcomes as simulations (`🧪 DRY RUN — no transaction was sent.`) and forbidden from using completion verbs/emojis like "Deployed", "Closed", "🚀", "✅".
+
+Use dry-run for: screener tuning, prompt validation, integration testing (OKX, Helius, Telegram, HiveMind), safety-check verification. Don't use it for: validating TP/SL/trailing rules — no positions exist for those rules to evaluate. For that, deploy small live capital (default `deployAmountSol: 0.5`).
+
+---
+
 ## Environment Variables
 
 | Var | Required | Purpose |
@@ -244,7 +257,10 @@ Agent Meridian HiveMind sync is handled by `hivemind.js`. **Opt-in**: disabled u
 | `OKX_API_KEY` / `OK_ACCESS_KEY` | No | OKX OnchainOS — risk flags, bundle/sniper %, ATH price. Direct path (all 3 required keys set); falls back to Agent Meridian relay when absent |
 | `OKX_SECRET_KEY` / `OK_ACCESS_SECRET` | No | OKX HMAC signing secret |
 | `OKX_PASSPHRASE` / `OK_ACCESS_PASSPHRASE` | No | OKX passphrase; literal `"enter your passphrase here"` is treated as unset |
-| `OKX_PROJECT_ID` / `OK_ACCESS_PROJECT` | No | OKX project id (optional) |
+| `OKX_PROJECT_ID` / `OK_ACCESS_PROJECT` | No | OKX project id — required in practice for the OnchainOS `/api/v6/dex/market/...` endpoints. Without this header OKX returns 50114 "Invalid Authority" even with valid HMAC. |
+| `OKX_MIN_INTERVAL_MS` | No | Min gap between authenticated OKX calls (default 500ms = 2 RPS). Set to 0 to disable throttle if your tier supports more |
+| `LPAGENT_CACHE_TTL_MS` | No | TTL for LPAgent enrichment cache (default 30000ms). Absorbs bursts of `getMyPositions` calls without re-hitting LPAgent |
+| `NODE_OPTIONS=--dns-result-order=ipv4first` | No | Set on cloud VMs with broken IPv6 routes. See README troubleshooting for the symptom (`Telegram fetch failed` every 5s) |
 
 ---
 

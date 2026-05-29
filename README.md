@@ -528,7 +528,8 @@ Security notes:
 - After every screening cycle: full agent report (what it found, whether it deployed)
 - When a position goes out of range past `outOfRangeWaitMinutes`
 - On deploy: pair, amount, position address, tx hash
-- On close: pair and PnL
+- On close: pair, PnL, and the close reason (`stop loss` / `take profit` / `trailing TP` / `out of range timeout` / `low yield` / `agent decision`)
+- Dry-run results are gated — no fake "Deployed/Closed" alerts when `DRY_RUN=true`
 
 You can also chat with the agent via Telegram using the same free-form interface as the REPL: `"check wallet 7tB8..."`, `"who are the top LPers in pool ABC..."`, `"close all positions"`, etc. Only explicitly allowed Telegram user IDs can issue commands.
 
@@ -634,7 +635,17 @@ For per-role overrides (different model for screening vs. management), set `scre
 
 A single `fetch failed` at startup is normal — the poll loop retries every 5s. Repeated failures indicate a real network problem.
 
-**`[OKX] advanced-info unavailable for ...`** — OKX enrichment couldn't be fetched. The bot continues with weaker risk signals. Either ignore (fine for most users) or set `OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE` in `.env` to use the direct OKX OnchainOS path; without them the bot falls back to the Agent Meridian public relay which may rate-limit on fresh tokens.
+**`[OKX] advanced-info unavailable for ...`** — OKX enrichment couldn't be fetched. The bot continues with weaker risk signals. Either ignore (fine for most users) or set `OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE` / **`OKX_PROJECT_ID`** in `.env` to use the direct OKX OnchainOS path; without them the bot falls back to the Agent Meridian public relay which may rate-limit on fresh tokens. The Project ID header is required for `/api/v6/dex/market/...` endpoints — without it OKX returns 50114 "Invalid Authority" even with valid credentials.
+
+**OKX 401 with `{"msg":"Invalid Authority","code":"50114"}`** in error body — credentials are otherwise valid but one of: (1) the key was issued from the CEX portal at www.okx.com instead of the Web3 portal at web3.okx.com → wrong scope, recreate at web3.okx.com; (2) `OKX_PROJECT_ID` env is missing → add it from the Web3 dashboard's project page; (3) the key was created under a *different* project than the Project ID you set → match them up. Verify with a hand-rolled request to `/api/v6/dex/market/token/advanced-info?chainIndex=501&tokenContractAddress=So11111111111111111111111111111111111111112` (using SOL bypasses any per-token gating).
+
+**LPAgent `HTTP 429 for owner ...`** — only happens in tight bursts before the 30-second cache absorbs them. Increase `LPAGENT_CACHE_TTL_MS` env (e.g. to 60000) if you still see them. PnL data 30–60 seconds stale doesn't affect management decisions.
+
+**`[POSITIONS_WARN] Suspicious pnl_pct for ...`** with `diff` roughly equal to your claimed fees as % of deposit — false alarm from before the LPAgent PnL derivation included claimed fees + withdrawals. If you still see it after pulling, your bot is on an old commit; pull latest.
+
+**`[AGENT] Empty response, retrying...`** firing repeatedly — the LLM is hitting its `max_tokens` budget on internal reasoning (common with thinking-mode models). Raise `maxTokens` in `user-config.json` from the default 4096 to 8192, or switch the affected role's model to a non-thinking variant.
+
+**Wallet env vars don't take effect after editing `.env`** — `envcrypt.js` loads with `dotenv.config({ override: false })`, meaning pre-set shell environment variables win over `.env`. If you have e.g. `OKX_API_KEY` exported in `~/.bashrc` or a parent shell, that value will be used instead of what's in `.env`. Either unset the shell export (`unset OKX_API_KEY`) or fix the shell config.
 
 ---
 
