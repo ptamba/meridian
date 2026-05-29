@@ -361,6 +361,13 @@ const LLM_PROVIDERS = [
     modelDefault: "gpt-4o",
   },
   {
+    label:   "DeepSeek     (api.deepseek.com — v4 flash / v4 pro)",
+    key:     "deepseek",
+    baseUrl: "https://api.deepseek.com/v1",
+    keyHint: "sk-...",
+    modelDefault: "deepseek-v4-flash",
+  },
+  {
     label:   "Local / LM Studio / Ollama (OpenAI-compatible)",
     key:     "local",
     baseUrl: "http://localhost:1234/v1",
