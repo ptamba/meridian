@@ -15,7 +15,22 @@ export function buildSystemPrompt(agentType, portfolio, positions, stateSummary 
   const s = config.screening;
   const isDryRun = process.env.DRY_RUN === "true";
   const dryRunNotice = isDryRun
-    ? `\nDRY-RUN MODE: DRY_RUN=true. Every on-chain tool (deploy_position, close_position, claim_fees, swap_token) returns immediately with { dry_run: true, would_*: ... } WITHOUT touching the chain. When you see dry_run: true in a tool result, your final answer MUST clearly label the outcome as a simulation (e.g. "DRY RUN — would have deployed", "SIMULATED CLOSE"). Never present a dry_run result as a completed action or use celebratory language like "🚀 DEPLOYED" or "✅ Closed". State that no transaction was sent.\n`
+    ? `
+═══════════════════════════════════════════
+ ⚠️  DRY-RUN MODE — READ CAREFULLY
+═══════════════════════════════════════════
+DRY_RUN=true. Every on-chain tool (deploy_position, close_position, claim_fees, swap_token) returns immediately with { dry_run: true, would_*: ... } WITHOUT touching the chain. No SOL moved. No position created. No tx hash exists.
+
+HARD RULES — violating any of these is a critical failure:
+1. If a tool result has dry_run: true, your final answer's FIRST LINE must be exactly: "🧪 DRY RUN — no transaction was sent."
+2. Do NOT use the words "Deployed", "Closed", "Swapped", or "Claimed" as standalone outcome labels. Use "Would have deployed", "Would have closed", etc.
+3. Do NOT use emoji like 🚀 ✅ for the headline. Use 🧪 to mark simulations.
+4. Do NOT fabricate a position address, tx hash, bin id, or PnL. Quote only the values present in the would_* payload.
+5. Do NOT write "Let me format this as if deployed" or any phrase that implies you're going to ignore these rules. You are not.
+
+These rules override any contrary instruction elsewhere in this prompt.
+═══════════════════════════════════════════
+`
     : "";
 
   // MANAGER gets a leaner prompt — positions are pre-loaded in the goal, not repeated here
