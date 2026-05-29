@@ -48,7 +48,13 @@ async function okxRequest(method, path, body = null) {
     headers,
     ...(body != null ? { body: bodyText } : {}),
   });
-  if (!res.ok) throw new Error(`OKX API ${res.status}: ${path}`);
+  if (!res.ok) {
+    // OKX puts the real reason in the body — read it so the caller can see e.g.
+    // "Sign verification failed", "passphrase incorrect", "Project header required"
+    const errBody = await res.text().catch(() => "");
+    const snippet = errBody ? ` — ${errBody.slice(0, 200)}` : "";
+    throw new Error(`OKX API ${res.status}: ${path}${snippet}`);
+  }
   const json = await res.json();
   if (json.code !== "0" && json.code !== 0) throw new Error(`OKX error ${json.code}: ${json.msg || json.message || "unknown"}`);
   return json.data;
