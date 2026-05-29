@@ -17,6 +17,16 @@ function numericConfig(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Resolve a numeric config in priority order: user-config.json → env → hardcoded default.
+// All three are tolerated as undefined/missing; the final value is always a finite number.
+function num(userValue, envName, fallback) {
+  const fromUser = numericConfig(userValue);
+  if (fromUser != null) return fromUser;
+  const fromEnv = numericConfig(process.env[envName]);
+  if (fromEnv != null) return fromEnv;
+  return fallback;
+}
+
 const legacyBinsBelow = numericConfig(u.binsBelow);
 const configuredMinBinsBelow = numericConfig(u.minBinsBelow) ?? MIN_SAFE_BINS_BELOW;
 const configuredMaxBinsBelow = numericConfig(u.maxBinsBelow)
@@ -114,7 +124,16 @@ export const config = {
     trailingTakeProfit:    u.trailingTakeProfit    ?? true,
     trailingTriggerPct:    u.trailingTriggerPct    ?? 3,    // activate trailing at X% PnL
     trailingDropPct:       u.trailingDropPct       ?? 1.5,  // close when drops X% from peak
+    // Trailing TP recheck — wait this long before confirming a peak/drop,
+    // and only confirm if the new sample is within the configured tolerance.
+    // Priority for every value below: user-config.json → env var → hardcoded default.
+    trailingPeakConfirmDelayMs:      num(u.trailingPeakConfirmDelayMs,      "TRAILING_PEAK_CONFIRM_DELAY_MS",      15_000),
+    trailingPeakConfirmTolerance:    num(u.trailingPeakConfirmTolerance,    "TRAILING_PEAK_CONFIRM_TOLERANCE",     0.85),
+    trailingDropConfirmDelayMs:      num(u.trailingDropConfirmDelayMs,      "TRAILING_DROP_CONFIRM_DELAY_MS",      15_000),
+    trailingDropConfirmTolerancePct: num(u.trailingDropConfirmTolerancePct, "TRAILING_DROP_CONFIRM_TOLERANCE_PCT", 1.0),
     pnlSanityMaxDiffPct:   u.pnlSanityMaxDiffPct   ?? 5,    // max allowed diff between reported and derived pnl % before ignoring a tick
+    // Cooldown after a "low yield" close — distinct from the OOR / repeat-deploy cooldowns.
+    lowYieldCooldownHours: num(u.lowYieldCooldownHours, "LOW_YIELD_COOLDOWN_HOURS", 4),
     // SOL mode — positions, PnL, and balances reported in SOL instead of USD
     solMode:               u.solMode               ?? false,
   },
@@ -154,6 +173,23 @@ export const config = {
     weightFloor:    u.darwinFloor       ?? 0.3,
     weightCeiling:  u.darwinCeiling     ?? 2.5,
     minSamples:     u.darwinMinSamples  ?? 10,
+  },
+
+  // ─── Lessons / Threshold Evolution ────
+  // Priority: user-config.json → env var → hardcoded default.
+  lessons: {
+    minEvolvePositions: num(u.lessonsMinEvolvePositions, "LESSONS_MIN_EVOLVE_POSITIONS", 5),
+    maxChangePerStep:   num(u.lessonsMaxChangePerStep,   "LESSONS_MAX_CHANGE_PER_STEP",  0.20),
+  },
+
+  // ─── Swap / Slippage ──────────────────
+  // All values are basis points unless suffixed with Pct.
+  // Priority: user-config.json → env var → hardcoded default.
+  swaps: {
+    deployRelaySlippageBps:   num(u.deployRelaySlippageBps,   "DEPLOY_RELAY_SLIPPAGE_BPS",   500),   // Jupiter zap-in via relay (0.5%)
+    addLiquidityWideRangePct: num(u.addLiquidityWideRangePct, "ADD_LIQUIDITY_WIDE_RANGE_PCT", 10),    // Meteora wide-range path takes a percentage
+    addLiquidityStandardBps:  num(u.addLiquidityStandardBps,  "ADD_LIQUIDITY_STANDARD_BPS",  1000),  // Meteora standard path (10%)
+    liquidationSlippageBps:   num(u.liquidationSlippageBps,   "LIQUIDATION_SLIPPAGE_BPS",    5000),  // close-position liquidation swap (5%)
   },
 
   // ─── Common Token Mints ────────────────

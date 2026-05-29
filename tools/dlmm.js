@@ -644,7 +644,7 @@ export async function deployPosition({
           percentX: finalAmountX > 0 && finalAmountY > 0 ? 0.5 : 0,
           fromBinId: minBinId,
           toBinId: maxBinId,
-          slippageBps: 500,
+          slippageBps: config.swaps.deployRelaySlippageBps,
           provider: "JUPITER_ULTRA",
         }),
       });
@@ -797,7 +797,7 @@ export async function deployPosition({
         totalXAmount: totalXLamports,
         totalYAmount: totalYLamports,
         strategy: { minBinId, maxBinId, strategyType },
-        slippage: 10, // 10%
+        slippage: config.swaps.addLiquidityWideRangePct,
       });
       const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
       for (let i = 0; i < addTxArray.length; i++) {
@@ -813,7 +813,7 @@ export async function deployPosition({
         totalXAmount: totalXLamports,
         totalYAmount: totalYLamports,
         strategy: { maxBinId, minBinId, strategyType },
-        slippage: 1000, // 10% in bps
+        slippage: config.swaps.addLiquidityStandardBps,
       });
       const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet, newPosition]);
       txHashes.push(txHash);
@@ -1538,7 +1538,7 @@ export async function closePosition({ position_address, reason }) {
           positionId: position_address,
           owner: wallet.publicKey.toString(),
           bps: 10000,
-          slippageBps: 5000,
+          slippageBps: config.swaps.liquidationSlippageBps,
           output: closeOutput,
           provider: "OKX",
           type: "meteora",

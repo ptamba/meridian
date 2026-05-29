@@ -89,10 +89,6 @@ let _screeningLastTriggered = 0; // epoch ms — prevents management from spammi
 let _pollTriggeredAt = 0; // epoch ms — cooldown for poller-triggered management
 const _peakConfirmTimers = new Map();
 const _trailingDropConfirmTimers = new Map();
-const TRAILING_PEAK_CONFIRM_DELAY_MS = 15_000;
-const TRAILING_PEAK_CONFIRM_TOLERANCE = 0.85;
-const TRAILING_DROP_CONFIRM_DELAY_MS = 15_000;
-const TRAILING_DROP_CONFIRM_TOLERANCE_PCT = 1.0;
 
 /** Strip <think>...</think> reasoning blocks that some models leak into output */
 function stripThink(text) {
@@ -123,11 +119,11 @@ function schedulePeakConfirmation(positionAddress) {
     try {
       const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
       const position = result?.positions?.find((p) => p.position === positionAddress);
-      resolvePendingPeak(positionAddress, position?.pnl_pct ?? null, TRAILING_PEAK_CONFIRM_TOLERANCE);
+      resolvePendingPeak(positionAddress, position?.pnl_pct ?? null, config.management.trailingPeakConfirmTolerance);
     } catch (error) {
       log("state_warn", `Peak confirmation failed for ${positionAddress}: ${error.message}`);
     }
-  }, TRAILING_PEAK_CONFIRM_DELAY_MS);
+  }, config.management.trailingPeakConfirmDelayMs);
 
   _peakConfirmTimers.set(positionAddress, timer);
 }
@@ -144,7 +140,7 @@ function scheduleTrailingDropConfirmation(positionAddress) {
         positionAddress,
         position?.pnl_pct ?? null,
         config.management.trailingDropPct,
-        TRAILING_DROP_CONFIRM_TOLERANCE_PCT,
+        config.management.trailingDropConfirmTolerancePct,
       );
       if (resolved?.confirmed) {
         log("state", `[Trailing recheck] Confirmed trailing exit for ${positionAddress} — triggering management`);
@@ -153,7 +149,7 @@ function scheduleTrailingDropConfirmation(positionAddress) {
     } catch (error) {
       log("state_warn", `Trailing drop confirmation failed for ${positionAddress}: ${error.message}`);
     }
-  }, TRAILING_DROP_CONFIRM_DELAY_MS);
+  }, config.management.trailingDropConfirmDelayMs);
 
   _trailingDropConfirmTimers.set(positionAddress, timer);
 }

@@ -16,8 +16,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
 
 const LESSONS_FILE = "./lessons.json";
-const MIN_EVOLVE_POSITIONS = 5;   // don't evolve until we have real data
-const MAX_CHANGE_PER_STEP  = 0.20; // never shift a threshold more than 20% at once
 const PERFORMANCE_SIGNAL_FIELDS = [
   "organic_score",
   "fee_tvl_ratio",
@@ -177,9 +175,10 @@ export async function recordPerformance(perf) {
     });
   }
 
-  // Evolve thresholds every 5 closed positions
-  if (data.performance.length % MIN_EVOLVE_POSITIONS === 0) {
-    const { config, reloadScreeningThresholds } = await import("./config.js");
+  // Evolve thresholds every N closed positions (config.lessons.minEvolvePositions)
+  const { config, reloadScreeningThresholds } = await import("./config.js");
+  const minEvolvePositions = Math.max(1, config.lessons.minEvolvePositions);
+  if (data.performance.length % minEvolvePositions === 0) {
     const result = evolveThresholds(data.performance, config);
     if (result?.changes && Object.keys(result.changes).length > 0) {
       reloadScreeningThresholds();
@@ -309,7 +308,9 @@ function derivLesson(perf) {
  * @returns {{ changes: Object, rationale: Object } | null}
  */
 export function evolveThresholds(perfData, config) {
-  if (!perfData || perfData.length < MIN_EVOLVE_POSITIONS) return null;
+  const minEvolvePositions = Math.max(1, config.lessons.minEvolvePositions);
+  const maxChangePerStep   = config.lessons.maxChangePerStep;
+  if (!perfData || perfData.length < minEvolvePositions) return null;
 
   const winners = perfData.filter((p) => p.pnl_pct > 0);
   const losers  = perfData.filter((p) => p.pnl_pct < -5);
@@ -335,7 +336,7 @@ export function evolveThresholds(perfData, config) {
       if (loserP25 < current) {
         // Tighten: new ceiling = loserP25 + a small buffer
         const target  = loserP25 * 1.15;
-        const newVal  = clamp(nudge(current, target, MAX_CHANGE_PER_STEP), 1.0, 20.0);
+        const newVal  = clamp(nudge(current, target, maxChangePerStep), 1.0, 20.0);
         const rounded = Number(newVal.toFixed(1));
         if (rounded < current) {
           changes.maxVolatility = rounded;
@@ -347,7 +348,7 @@ export function evolveThresholds(perfData, config) {
       const winnerP75 = percentile(winnerVols, 75);
       if (winnerP75 > current * 1.1) {
         const target  = winnerP75 * 1.1;
-        const newVal  = clamp(nudge(current, target, MAX_CHANGE_PER_STEP), 1.0, 20.0);
+        const newVal  = clamp(nudge(current, target, maxChangePerStep), 1.0, 20.0);
         const rounded = Number(newVal.toFixed(1));
         if (rounded > current) {
           changes.maxVolatility = rounded;
@@ -369,7 +370,7 @@ export function evolveThresholds(perfData, config) {
       const minWinnerFee = Math.min(...winnerFees);
       if (minWinnerFee > current * 1.2) {
         const target  = minWinnerFee * 0.85; // stay slightly below min winner
-        const newVal  = clamp(nudge(current, target, MAX_CHANGE_PER_STEP), 0.05, 10.0);
+        const newVal  = clamp(nudge(current, target, maxChangePerStep), 0.05, 10.0);
         const rounded = Number(newVal.toFixed(2));
         if (rounded > current) {
           changes.minFeeTvlRatio = rounded;
@@ -386,7 +387,7 @@ export function evolveThresholds(perfData, config) {
         const minWinnerFee = Math.min(...winnerFees);
         if (minWinnerFee > maxLoserFee) {
           const target  = maxLoserFee * 1.2;
-          const newVal  = clamp(nudge(current, target, MAX_CHANGE_PER_STEP), 0.05, 10.0);
+          const newVal  = clamp(nudge(current, target, maxChangePerStep), 0.05, 10.0);
           const rounded = Number(newVal.toFixed(2));
           if (rounded > current && !changes.minFeeTvlRatio) {
             changes.minFeeTvlRatio = rounded;
@@ -412,7 +413,7 @@ export function evolveThresholds(perfData, config) {
         // Set floor just below worst winner
         const minWinnerOrganic = Math.min(...winnerOrganics);
         const target = Math.max(minWinnerOrganic - 3, current);
-        const newVal = clamp(Math.round(nudge(current, target, MAX_CHANGE_PER_STEP)), 60, 90);
+        const newVal = clamp(Math.round(nudge(current, target, maxChangePerStep)), 60, 90);
         if (newVal > current) {
           changes.minOrganic = newVal;
           rationale.minOrganic = `Winner avg organic ${avgWinnerOrganic.toFixed(0)} vs loser avg ${avgLoserOrganic.toFixed(0)} — raised from ${current} → ${newVal}`;

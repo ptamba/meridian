@@ -60,8 +60,21 @@
   "trailingTakeProfit": true,
   "trailingTriggerPct": 3,
   "trailingDropPct": 1.5,
+  "trailingPeakConfirmDelayMs": 15000,
+  "trailingPeakConfirmTolerance": 0.85,
+  "trailingDropConfirmDelayMs": 15000,
+  "trailingDropConfirmTolerancePct": 1.0,
   "pnlSanityMaxDiffPct": 5,
+  "lowYieldCooldownHours": 4,
   "solMode": false,
+
+  "lessonsMinEvolvePositions": 5,
+  "lessonsMaxChangePerStep": 0.20,
+
+  "deployRelaySlippageBps": 500,
+  "addLiquidityWideRangePct": 10,
+  "addLiquidityStandardBps": 1000,
+  "liquidationSlippageBps": 5000,
 
   "managementIntervalMin": 10,
   "screeningIntervalMin": 30,
