@@ -59,6 +59,16 @@ function isFeeGeneratingDeploy(deploy) {
   return Number.isFinite(feeEarnedPct) && feeEarnedPct >= minFeeEarnedPct;
 }
 
+function isLosingDeploy(deploy) {
+  const pnlPctMax     = Number(config.management.repeatDeployCooldownLosingPnlPctMax        ?? 0);
+  const feeEarnedMax  = Number(config.management.repeatDeployCooldownLosingFeeEarnedPctMax  ?? 0.5);
+  const pnlPct        = Number(deploy.pnl_pct ?? 0);
+  const feeEarnedPct  = Number(deploy.fee_earned_pct ?? 0);
+  if (Number.isFinite(pnlPct) && pnlPct <= pnlPctMax) return true;
+  if (Number.isFinite(feeEarnedPct) && feeEarnedPct <= feeEarnedMax) return true;
+  return false;
+}
+
 function setPoolCooldown(entry, hours, reason) {
   const cooldownUntil = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
   entry.cooldown_until = cooldownUntil;
@@ -192,14 +202,25 @@ export function recordPoolDeploy(poolAddress, deployData) {
     const cooldownHours = Math.max(0, Number(config.management.repeatDeployCooldownHours ?? 12));
     const rawScope = String(config.management.repeatDeployCooldownScope || "token").toLowerCase();
     const scope = ["pool", "token", "both"].includes(rawScope) ? rawScope : "token";
+    const rawMode = String(config.management.repeatDeployCooldownMode || "winners").toLowerCase();
+    const mode = ["winners", "losers", "both"].includes(rawMode) ? rawMode : "winners";
     const recentRepeatDeploys = entry.deploys.slice(-triggerCount);
-    const repeatedFeeGeneratingDeploys =
-      cooldownHours > 0 &&
-      recentRepeatDeploys.length >= triggerCount &&
-      recentRepeatDeploys.every((d) => d.pnl_pct != null && isFeeGeneratingDeploy(d));
+    const hasEnoughHistory = cooldownHours > 0 && recentRepeatDeploys.length >= triggerCount;
+    const allHavePnl = hasEnoughHistory && recentRepeatDeploys.every((d) => d.pnl_pct != null);
 
-    if (repeatedFeeGeneratingDeploys) {
-      const reason = `repeat fee-generating deploys (${triggerCount}x)`;
+    const winStreak  = allHavePnl && recentRepeatDeploys.every((d) => isFeeGeneratingDeploy(d));
+    const loseStreak = allHavePnl && recentRepeatDeploys.every((d) => isLosingDeploy(d));
+
+    let trigger = false;
+    let reason = null;
+    if (mode === "winners" && winStreak)  { trigger = true; reason = `repeat winners (${triggerCount}x) — rotate-winners mode`; }
+    if (mode === "losers"  && loseStreak) { trigger = true; reason = `repeat losers (${triggerCount}x) — cut-losers mode`; }
+    if (mode === "both"    && (winStreak || loseStreak)) {
+      trigger = true;
+      reason  = `repeat ${winStreak ? "winners" : "losers"} (${triggerCount}x)`;
+    }
+
+    if (trigger) {
       if (scope === "pool" || scope === "both" || !entry.base_mint) {
         const poolCooldownUntil = setPoolCooldown(entry, cooldownHours, reason);
         log("pool-memory", `Cooldown set for ${entry.name} until ${poolCooldownUntil} (${reason})`);

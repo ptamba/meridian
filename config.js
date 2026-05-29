@@ -119,6 +119,16 @@ export const config = {
     repeatDeployCooldownHours: u.repeatDeployCooldownHours ?? 12,
     repeatDeployCooldownScope: u.repeatDeployCooldownScope ?? "token", // pool | token | both
     repeatDeployCooldownMinFeeEarnedPct: u.repeatDeployCooldownMinFeeEarnedPct ?? u.repeatDeployCooldownMinFeeYieldPct ?? 0,
+    // Direction of the streak that triggers cooldown:
+    //   "winners" — N consecutive fee-generating wins → cooldown (rotate winners, mean-reversion)
+    //   "losers"  — N consecutive losers (no fees or negative PnL) → cooldown (let winners run, cut losers)
+    //   "both"    — either streak triggers cooldown
+    // Default kept as "winners" for backward compatibility; flip to "losers" for momentum-style memecoin LP.
+    repeatDeployCooldownMode: u.repeatDeployCooldownMode ?? "winners",
+    // PnL/fee thresholds for the "losers" classification. A deploy counts as losing if
+    // either pnl_pct <= losingPnlPctMax OR fee_earned_pct <= losingFeeEarnedPctMax.
+    repeatDeployCooldownLosingPnlPctMax:        u.repeatDeployCooldownLosingPnlPctMax        ?? 0,
+    repeatDeployCooldownLosingFeeEarnedPctMax:  u.repeatDeployCooldownLosingFeeEarnedPctMax  ?? 0.5,
     minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
     stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
     takeProfitPct:         u.takeProfitPct         ?? u.takeProfitFeePct ?? 5,
