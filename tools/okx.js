@@ -14,6 +14,20 @@ const OKX_SECRET_KEY = process.env.OKX_SECRET_KEY || process.env.OK_ACCESS_SECRE
 const OKX_PASSPHRASE = process.env.OKX_PASSPHRASE || process.env.OK_ACCESS_PASSPHRASE || "";
 const OKX_PROJECT_ID = process.env.OKX_PROJECT_ID || process.env.OK_ACCESS_PROJECT || "";
 
+// OKX OnchainOS free-tier limits are typically 1-2 RPS per endpoint, and parallel
+// requests that share the same millisecond timestamp can be rejected with 50114
+// "Invalid Authority" as HMAC replay-protection. We serialize authenticated calls
+// behind a single in-process queue with a minimum inter-call gap. Override via env
+// if your account tier allows faster (e.g. 200ms for 5 RPS).
+const OKX_MIN_INTERVAL_MS = Number(process.env.OKX_MIN_INTERVAL_MS ?? 500);
+
+let _okxNextSlot = Promise.resolve();
+function reserveOkxSlot() {
+  const slot = _okxNextSlot;
+  _okxNextSlot = slot.then(() => new Promise((r) => setTimeout(r, OKX_MIN_INTERVAL_MS)));
+  return slot;
+}
+
 function hasAuth() {
   return !!(OKX_API_KEY && OKX_SECRET_KEY && OKX_PASSPHRASE && !/enter your passphrase here/i.test(OKX_PASSPHRASE));
 }
@@ -39,7 +53,9 @@ function buildAuthHeaders(method, path, body = "") {
 
 async function okxRequest(method, path, body = null) {
   const bodyText = body == null ? "" : JSON.stringify(body);
-  const headers = hasAuth()
+  const authed = hasAuth();
+  if (authed && OKX_MIN_INTERVAL_MS > 0) await reserveOkxSlot();
+  const headers = authed
     ? { ...buildAuthHeaders(method, path, bodyText), ...(body != null ? { "Content-Type": "application/json" } : {}) }
     : { ...PUBLIC_HEADERS, ...(body != null ? { "Content-Type": "application/json" } : {}) };
 
