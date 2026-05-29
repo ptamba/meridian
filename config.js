@@ -186,10 +186,10 @@ export const config = {
   // All values are basis points unless suffixed with Pct.
   // Priority: user-config.json → env var → hardcoded default.
   swaps: {
-    deployRelaySlippageBps:   num(u.deployRelaySlippageBps,   "DEPLOY_RELAY_SLIPPAGE_BPS",   500),   // Jupiter zap-in via relay (0.5%)
-    addLiquidityWideRangePct: num(u.addLiquidityWideRangePct, "ADD_LIQUIDITY_WIDE_RANGE_PCT", 10),    // Meteora wide-range path takes a percentage
+    deployRelaySlippageBps:   num(u.deployRelaySlippageBps,   "DEPLOY_RELAY_SLIPPAGE_BPS",   500),   // Jupiter Ultra zap-in via relay (5%)
+    addLiquidityWideRangePct: num(u.addLiquidityWideRangePct, "ADD_LIQUIDITY_WIDE_RANGE_PCT", 10),    // Meteora wide-range path takes a percentage (10%)
     addLiquidityStandardBps:  num(u.addLiquidityStandardBps,  "ADD_LIQUIDITY_STANDARD_BPS",  1000),  // Meteora standard path (10%)
-    liquidationSlippageBps:   num(u.liquidationSlippageBps,   "LIQUIDATION_SLIPPAGE_BPS",    5000),  // close-position liquidation swap (5%)
+    liquidationSlippageBps:   num(u.liquidationSlippageBps,   "LIQUIDATION_SLIPPAGE_BPS",    5000),  // OKX zap-out close (50%) — wide on purpose so exits don't fail on thin memecoin liquidity
   },
 
   // ─── Common Token Mints ────────────────

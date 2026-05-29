@@ -444,13 +444,42 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 
 | Field | Default | Description |
 |---|---|---|
-| `deployAmountSol` | `0.5` | Base SOL per new position |
+| `deployAmountSol` | `0.5` | Base SOL per new position (floor) |
 | `positionSizePct` | `0.35` | Fraction of deployable balance to use |
 | `maxDeployAmount` | `50` | Maximum SOL cap per position |
 | `gasReserve` | `0.2` | Minimum SOL to keep for gas |
 | `minSolToOpen` | `0.55` | Minimum wallet SOL before opening |
 | `outOfRangeWaitMinutes` | `30` | Minutes OOR before acting |
-| `stopLossPct` | `-15` | Close position if price drops by this % |
+| `stopLossPct` | `-50` | Close position if PnL falls below this % |
+| `takeProfitPct` | `5` | Close position if PnL reaches this % |
+| `trailingTakeProfit` | `true` | Enable trailing-TP exits |
+| `trailingTriggerPct` | `3` | Arm trailing once PnL crosses this % |
+| `trailingDropPct` | `1.5` | Close when PnL drops this % from peak |
+| `trailingPeakConfirmDelayMs` | `15000` | Wait this long before confirming a new peak |
+| `trailingPeakConfirmTolerance` | `0.85` | Confirm peak if recheck PnL ≥ peak × tolerance |
+| `trailingDropConfirmDelayMs` | `15000` | Wait this long before confirming a trailing drop |
+| `trailingDropConfirmTolerancePct` | `1.0` | Confirm drop if recheck stays within this band |
+| `lowYieldCooldownHours` | `4` | Cooldown after a "low yield" close (0 disables) |
+
+### Lessons
+
+| Field | Default | Description |
+|---|---|---|
+| `lessonsMinEvolvePositions` | `5` | Closed positions required before evolving screening thresholds |
+| `lessonsMaxChangePerStep` | `0.20` | Max relative shift per evolution cycle (e.g. 0.20 = 20%) |
+
+### Swaps & slippage
+
+All bps fields use the standard scale (1bp = 0.01%, so 500 = 5%).
+
+| Field | Default | Description |
+|---|---|---|
+| `deployRelaySlippageBps` | `500` | Jupiter Ultra zap-in via relay (5%) |
+| `addLiquidityWideRangePct` | `10` | Meteora wide-range path takes a percent (10%) |
+| `addLiquidityStandardBps` | `1000` | Meteora standard path (10%) |
+| `liquidationSlippageBps` | `5000` | OKX zap-out close (50% — wide on purpose so memecoin exits don't fail) |
+
+Every key above can be overridden via env var (`DEPLOY_RELAY_SLIPPAGE_BPS`, `LIQUIDATION_SLIPPAGE_BPS`, etc.). See `.env.example` for the full list. Priority: `user-config.json` > `.env` > built-in default.
 
 ### Schedule
 
@@ -567,15 +596,45 @@ Leave `hiveMindUrl` and `hiveMindApiKey` blank (the default). The agent will ski
 
 ---
 
-## Using a local model (LM Studio)
+## Using a different LLM provider
 
+Any OpenAI-compatible endpoint works. Set the base URL, key, and model in `.env`:
+
+**LM Studio (local)**
 ```env
 LLM_BASE_URL=http://localhost:1234/v1
 LLM_API_KEY=lm-studio
 LLM_MODEL=your-local-model-name
 ```
 
-Any OpenAI-compatible endpoint works.
+**DeepSeek (api.deepseek.com)**
+```env
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_API_KEY=sk-your_deepseek_key
+LLM_MODEL=deepseek-v4-flash     # or deepseek-v4-pro
+```
+DeepSeek reasoner / thinking mode is supported — the agent detects the "thinking mode does not support tool_choice" rejection and retries without `tool_choice` for the rest of the run. No extra config needed.
+
+**OpenAI**
+```env
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=sk-...
+LLM_MODEL=gpt-4o
+```
+
+For per-role overrides (different model for screening vs. management), set `screeningModel`, `managementModel`, `generalModel` in `user-config.json`. Precedence: `user-config.json` > `LLM_MODEL` env > built-in default.
+
+---
+
+## Troubleshooting
+
+**Telegram `Poll error: fetch failed` repeating every 5s on a cloud VM** — almost always a broken IPv6 route. Test with `curl -v https://api.telegram.org/ 2>&1 | head -20`; if you see `Immediate connect fail for 2001:...: Network is unreachable`, force the bot onto IPv4 by either:
+- starting with `NODE_OPTIONS=--dns-result-order=ipv4first npm start`, or
+- disabling IPv6 on the host: `sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1`.
+
+A single `fetch failed` at startup is normal — the poll loop retries every 5s. Repeated failures indicate a real network problem.
+
+**`[OKX] advanced-info unavailable for ...`** — OKX enrichment couldn't be fetched. The bot continues with weaker risk signals. Either ignore (fine for most users) or set `OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE` in `.env` to use the direct OKX OnchainOS path; without them the bot falls back to the Agent Meridian public relay which may rate-limit on fresh tokens.
 
 ---
 

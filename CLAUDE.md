@@ -78,7 +78,8 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 | timeframe | screening | "5m" |
 | category | screening | "trending" |
 | minTokenFeesSol | screening | 30 |
-| maxBundlersPct | screening | 30 |
+| maxBundlePct | screening | 30 |
+| maxBotHoldersPct | screening | 30 |
 | maxTop10Pct | screening | 60 |
 | blockedLaunchpads | screening | [] |
 | deployAmountSol | management | 0.5 |
@@ -88,9 +89,21 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 | positionSizePct | management | 0.35 |
 | minSolToOpen | management | 0.55 |
 | outOfRangeWaitMinutes | management | 30 |
+| stopLossPct / takeProfitPct | management | -50 / 5 |
+| trailingTriggerPct / trailingDropPct | management | 3 / 1.5 |
+| trailingPeakConfirmDelayMs / Tolerance | management | 15000 / 0.85 |
+| trailingDropConfirmDelayMs / TolerancePct | management | 15000 / 1.0 |
+| lowYieldCooldownHours | management | 4 |
+| lessonsMinEvolvePositions / MaxChangePerStep | lessons | 5 / 0.20 |
+| deployRelaySlippageBps | swaps | 500 (Jupiter Ultra zap-in, 5%) |
+| addLiquidityWideRangePct | swaps | 10 (Meteora wide-range, percent) |
+| addLiquidityStandardBps | swaps | 1000 (Meteora standard, 10%) |
+| liquidationSlippageBps | swaps | 5000 (OKX zap-out, 50% — wide on purpose) |
 | managementIntervalMin | schedule | 10 |
 | screeningIntervalMin | schedule | 30 |
 | managementModel / screeningModel / generalModel | llm | openrouter/healer-alpha |
+
+The `swaps.*`, `lessons.*`, `lowYieldCooldownHours`, and `trailing*Confirm*` keys also accept env-var overrides (priority: user-config.json > env > default). See `.env.example` for the env names.
 
 **`computeDeployAmount(walletSol)`** — scales position size with wallet balance (compounding). Formula: `clamp(deployable × positionSizePct, floor=deployAmountSol, ceil=maxDeployAmount)`.
 
@@ -180,10 +193,16 @@ const actualBaseFee = baseFactor > 0
 
 ## Model Configuration
 
+- Provider endpoint: `LLM_BASE_URL` env (default `https://openrouter.ai/api/v1`); set per-cycle model with `LLM_MODEL` env or per-role keys in user-config.json.
 - Default model: `process.env.LLM_MODEL` or `openrouter/healer-alpha`
 - Fallback on 502/503/529: `stepfun/step-3.5-flash:free` (2nd attempt), then retry
-- Per-role models: `managementModel`, `screeningModel`, `generalModel` in user-config.json
-- LM Studio: set `LLM_BASE_URL=http://localhost:1234/v1` and `LLM_API_KEY=lm-studio`
+- Per-role models: `managementModel`, `screeningModel`, `generalModel` in user-config.json — precedence: user-config > `LLM_MODEL` > built-in default
+- Provider examples:
+  - LM Studio: `LLM_BASE_URL=http://localhost:1234/v1`, `LLM_API_KEY=lm-studio`
+  - DeepSeek: `LLM_BASE_URL=https://api.deepseek.com/v1`, model `deepseek-v4-flash` or `deepseek-v4-pro`
+  - OpenAI: `LLM_BASE_URL=https://api.openai.com/v1`
+  - MiniMax: `LLM_BASE_URL=https://api.minimax.io/v1`
+- Thinking mode: `agent.js:145-148, 230-235` detects "thinking mode does not support tool_choice" errors (DeepSeek reasoner / similar) and retries the request without `tool_choice` for the rest of the run. No extra config needed.
 - `maxOutputTokens` minimum: 2048 (free models may have lower limits causing empty responses)
 
 ---
@@ -200,7 +219,7 @@ const actualBaseFee = baseFactor > 0
 
 ## HiveMind
 
-Agent Meridian HiveMind sync is handled by `hivemind.js`. It uses built-in Agent Meridian defaults unless overridden by config or env.
+Agent Meridian HiveMind sync is handled by `hivemind.js`. **Opt-in**: disabled unless both `hiveMindUrl` (user-config.json) and `hiveMindApiKey` (user-config.json or `HIVEMIND_API_KEY` env) are set. `isHiveMindEnabled()` returns true only when both are non-empty; every request short-circuits to `null` otherwise. To enable, point at `https://api.agentmeridian.xyz` (or your own HiveMind-compatible server) and provide an API key.
 
 ---
 
@@ -220,6 +239,12 @@ Agent Meridian HiveMind sync is handled by `hivemind.js`. It uses built-in Agent
 | `HIVE_MIND_URL` | No | Collective intelligence server |
 | `HIVE_MIND_API_KEY` | No | Hive mind auth token |
 | `HELIUS_API_KEY` | No | Enhanced wallet balance data |
+| `LPAGENT_API_KEY` | No | Direct LPAgent enrichment for accurate position PnL — without it, PnL falls back to Meteora's PnL API |
+| `JUPITER_API_KEY` | No | Jupiter Ultra rate-limit upgrade; public tier works without it |
+| `OKX_API_KEY` / `OK_ACCESS_KEY` | No | OKX OnchainOS — risk flags, bundle/sniper %, ATH price. Direct path (all 3 required keys set); falls back to Agent Meridian relay when absent |
+| `OKX_SECRET_KEY` / `OK_ACCESS_SECRET` | No | OKX HMAC signing secret |
+| `OKX_PASSPHRASE` / `OK_ACCESS_PASSPHRASE` | No | OKX passphrase; literal `"enter your passphrase here"` is treated as unset |
+| `OKX_PROJECT_ID` / `OK_ACCESS_PROJECT` | No | OKX project id (optional) |
 
 ---
 
