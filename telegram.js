@@ -16,18 +16,38 @@ const ALLOWED_USER_IDS = new Set(
 );
 
 let chatId   = process.env.TELEGRAM_CHAT_ID || null;
+let threadId = parseThreadId(process.env.TELEGRAM_THREAD_ID);
 let _offset  = 0;
 let _polling = false;
 let _liveMessageDepth = 0;
 let _warnedMissingChatId = false;
 let _warnedMissingAllowedUsers = false;
 
-// ─── chatId persistence ──────────────────────────────────────────
+// Bot API methods that accept message_thread_id (forum supergroups).
+// editMessageText / answerCallbackQuery target an existing message by id,
+// so they do NOT take a thread id.
+const THREAD_AWARE_METHODS = new Set([
+  "sendMessage",
+  "sendPhoto",
+  "sendDocument",
+  "sendChatAction",
+]);
+
+function parseThreadId(raw) {
+  if (raw == null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// ─── chatId / threadId persistence ───────────────────────────────
 function loadChatId() {
   try {
     if (fs.existsSync(USER_CONFIG_PATH)) {
       const cfg = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"));
       if (cfg.telegramChatId) chatId = cfg.telegramChatId;
+      if (threadId == null && cfg.telegramThreadId != null) {
+        threadId = parseThreadId(cfg.telegramThreadId);
+      }
     }
   } catch (error) {
     log("telegram_warn", `Invalid user-config.json; chatId not loaded: ${error.message}`);
@@ -63,6 +83,13 @@ function isAuthorizedIncomingMessage(msg) {
 
   if (incomingChatId !== chatId) return false;
 
+  // If a thread id is configured, only accept messages from that topic
+  // (forum supergroups). Messages from other topics are ignored.
+  if (threadId != null) {
+    const incomingThreadId = msg.message_thread_id ?? msg.chat?.message_thread_id ?? null;
+    if (incomingThreadId !== threadId) return false;
+  }
+
   if (chatType !== "private" && ALLOWED_USER_IDS.size === 0) {
     if (!_warnedMissingAllowedUsers) {
       log("telegram_warn", "Ignoring group Telegram messages because TELEGRAM_ALLOWED_USER_IDS is not configured. Set explicit allowed user IDs for command/control.");
@@ -86,10 +113,18 @@ export function isEnabled() {
 async function postTelegram(method, body) {
   if (!TOKEN || !chatId) return null;
   try {
+    const payload = { chat_id: chatId, ...body };
+    if (
+      threadId != null &&
+      THREAD_AWARE_METHODS.has(method) &&
+      payload.message_thread_id == null
+    ) {
+      payload.message_thread_id = threadId;
+    }
     const res = await fetch(`${BASE}/${method}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, ...body }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const err = await res.text();

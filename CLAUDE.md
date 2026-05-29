@@ -213,6 +213,7 @@ Agent Meridian HiveMind sync is handled by `hivemind.js`. It uses built-in Agent
 | `OPENROUTER_API_KEY` | Yes | LLM API key |
 | `TELEGRAM_BOT_TOKEN` | No | Telegram notifications |
 | `TELEGRAM_CHAT_ID` | No | Telegram chat target |
+| `TELEGRAM_THREAD_ID` | No | Forum supergroup topic id — scopes inbound + outbound to that thread |
 | `LLM_BASE_URL` | No | Override for local LLM (e.g. LM Studio) |
 | `LLM_MODEL` | No | Override default model |
 | `DRY_RUN` | No | Skip all on-chain transactions |

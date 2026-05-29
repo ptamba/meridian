@@ -485,12 +485,14 @@ Meridian no longer auto-registers the first chat for safety. You must set:
 TELEGRAM_BOT_TOKEN=<token>
 TELEGRAM_CHAT_ID=<target chat id>
 TELEGRAM_ALLOWED_USER_IDS=<comma-separated Telegram user ids allowed to control the bot>
+TELEGRAM_THREAD_ID=<optional — forum supergroup topic id>
 ```
 
 Security notes:
 - If `TELEGRAM_CHAT_ID` is not set, inbound Telegram control is ignored.
 - If the target chat is a group/supergroup and `TELEGRAM_ALLOWED_USER_IDS` is empty, inbound control is ignored.
 - Notifications still go to the configured chat, but command/control is limited to the allowed user IDs.
+- If `TELEGRAM_THREAD_ID` is set (forum-enabled supergroup topic id), the bot posts only into that topic and only accepts inbound messages from it. Leave blank for non-forum chats.
 
 **Notifications sent:**
 - After every management cycle: full agent report (reasoning + decisions)
