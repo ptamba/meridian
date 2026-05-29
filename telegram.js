@@ -293,6 +293,7 @@ export async function createLiveMessage(title, intro = "Starting...") {
     toolLines: [],
     footer: "",
     messageId: null,
+    lastSentText: null,
     flushTimer: null,
     flushPromise: null,
     flushRequested: false,
@@ -313,9 +314,14 @@ export async function createLiveMessage(title, intro = "Starting...") {
     if (!state.messageId) {
       const sent = await sendMessage(text);
       state.messageId = sent?.result?.message_id ?? null;
+      state.lastSentText = text;
       return;
     }
+    // Telegram returns 400 if editMessageText is called with content byte-identical
+    // to what's already shown. Skip the API call when nothing actually changed.
+    if (text === state.lastSentText) return;
     await editMessage(text, state.messageId);
+    state.lastSentText = text;
   }
 
   function scheduleFlush(delay = 300) {
