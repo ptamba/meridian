@@ -1297,6 +1297,10 @@ function formatHelpText() {
     "/pause — stop cron cycles",
     "/resume — start cron cycles again",
     "/stop — shut down agent",
+    "",
+    "In groups with multiple bots, target Meridian specifically with",
+    "either /meridian_<command> (e.g. /meridian_status) or",
+    "/<command>@meridian_bot (e.g. /status@meridian_bot).",
   ].join("\n");
 }
 
