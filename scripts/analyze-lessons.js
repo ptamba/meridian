@@ -193,6 +193,39 @@ function renderText(report) {
   }
 
   // Regime
+  // Daily breakdown
+  if (report.daily && report.daily.length) {
+    lines.push("");
+    lines.push("DAILY BREAKDOWN (last 7 calendar days with closes)");
+    lines.push("-".repeat(78));
+    lines.push("  " + pad("date", 22) + STATS_HEADER);
+    for (const [date, s] of report.daily) {
+      lines.push("  " + pad(date, 22) + fmtStatsLine(s));
+    }
+  }
+
+  // Today vs yesterday
+  if (report.todayVsYesterday) {
+    const tv = report.todayVsYesterday;
+    const arrow = (v) => v == null ? "" : (v >= 0 ? "+" : "") + v.toFixed(0) + "%";
+    const arrowPct = (v) => v == null ? "" : (v >= 0 ? "+" : "") + v.toFixed(1) + " pts";
+    lines.push("");
+    lines.push(`${tv.todayDate} vs ${tv.prevDate}`);
+    lines.push("-".repeat(78));
+    lines.push(`  closes:     ${lpad(arrow(tv.closesPct), 8)}   (${tv.todayStats.count} vs ${tv.prevStats.count})`);
+    lines.push(`  win rate:   ${lpad(arrowPct(tv.winRateDelta), 8)}   (${(tv.todayStats.winRate * 100).toFixed(0)}% vs ${(tv.prevStats.winRate * 100).toFixed(0)}%)`);
+    lines.push(`  total $$$:  ${lpad(arrow(tv.totalUsdPct), 8)}   (${usd(tv.todayStats.totalPnlUsd, 2)} vs ${usd(tv.prevStats.totalPnlUsd, 2)})`);
+    lines.push(`  avg hold:   ${lpad(arrow(tv.avgHoldPct), 8)}   (${tv.todayStats.avgHoldMin.toFixed(0)}m vs ${tv.prevStats.avgHoldMin.toFixed(0)}m)`);
+    // Verdict
+    const winDelta = tv.winRateDelta;
+    const usdDelta = tv.totalUsdPct ?? 0;
+    let verdict;
+    if (winDelta >= 5 && usdDelta >= 0)             verdict = "  ✅ improving — config changes (if any) helped";
+    else if (winDelta <= -5 || (usdDelta <= -30))   verdict = "  ⚠️  weaker — review screener / regime / recent config edits";
+    else                                            verdict = "  ➖ similar — within day-to-day variance";
+    lines.push(verdict);
+  }
+
   lines.push("");
   lines.push("REGIME — recent N=20 vs full history");
   lines.push("-".repeat(78));
@@ -287,6 +320,32 @@ function main() {
   const recentStats = bucketStats(rows.slice(-recentN));
   const allStats = bucketStats(rows);
 
+  // Daily breakdown — group by YYYY-MM-DD (from recorded_at), show last 7 days
+  const byDateMap = groupBy(rows, (r) => (r.recorded_at || "").slice(0, 10));
+  const byDate = [...byDateMap.entries()]
+    .filter(([d]) => d)            // drop entries with no date
+    .map(([d, rs]) => [d, bucketStats(rs)])
+    .sort((a, b) => a[0].localeCompare(b[0]));    // chronological
+  const recentDaily = byDate.slice(-7);            // last 7 days
+
+  // Today vs yesterday — uses the two most recent distinct calendar days
+  let todayVsYesterday = null;
+  if (byDate.length >= 2) {
+    const [, prevStats] = byDate[byDate.length - 2];
+    const [, todayStats] = byDate[byDate.length - 1];
+    const todayDate = byDate[byDate.length - 1][0];
+    const prevDate  = byDate[byDate.length - 2][0];
+    const pctDelta  = (a, b) => (b === 0 ? null : ((a - b) / Math.abs(b)) * 100);
+    const winRateDelta = (todayStats.winRate - prevStats.winRate) * 100;
+    todayVsYesterday = {
+      todayDate, prevDate, todayStats, prevStats,
+      closesPct:   pctDelta(todayStats.count, prevStats.count),
+      winRateDelta,
+      totalUsdPct: pctDelta(todayStats.totalPnlUsd, prevStats.totalPnlUsd),
+      avgHoldPct:  pctDelta(todayStats.avgHoldMin, prevStats.avgHoldMin),
+    };
+  }
+
   const report = {
     summary: {
       ...summaryStats,
@@ -301,6 +360,8 @@ function main() {
     topLosers,
     bestCloses,
     worstCloses,
+    daily: recentDaily,
+    todayVsYesterday,
     regime: { recent: recentStats, all: allStats },
   };
 
