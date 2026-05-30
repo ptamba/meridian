@@ -566,11 +566,13 @@ node scripts/analyze-lessons.js
 ```
 
 Reads `lessons.json` and prints a formatted report covering:
-- Summary stats (count, win rate, avg/median PnL, total PnL, fees, avg hold)
-- Distribution by close-reason tag (which exit rules are firing and how well)
-- Top winner and loser tokens by aggregate PnL
-- Best and worst individual closes
-- Recent (last 20) vs all-time regime comparison with a drift indicator
+- **Summary stats** — count, win rate, avg/median PnL, total PnL, fees, avg hold
+- **Distribution by close-reason tag** — which exit rules are firing and how well
+- **Top winner and loser tokens** by aggregate PnL
+- **Best and worst individual closes** (top/bottom 5 by PnL %)
+- **Daily breakdown** — one row per calendar day (last 7 days with closes). Same column shape as the by-reason/by-token tables so trends are directly comparable
+- **Today vs yesterday** — explicit deltas for close count, win rate (in percentage points), total PnL, and avg hold time, plus a one-line verdict (`✅ improving` / `➖ similar` / `⚠️ weaker`). The verdict is the actionable signal when tuning config — most tuning sessions reduce to "did that change make today better than yesterday"
+- **Regime drift** — last 20 closes vs all-time, with the same drift verdict
 
 Filters:
 ```bash
@@ -578,10 +580,17 @@ node scripts/analyze-lessons.js --last 50
 node scripts/analyze-lessons.js --since 2026-05-29
 node scripts/analyze-lessons.js --token ALIENS
 node scripts/analyze-lessons.js --tag take_profit
-node scripts/analyze-lessons.js --json | jq '.byReason'
+node scripts/analyze-lessons.js --json | jq '.daily, .todayVsYesterday'
 ```
 
-The regime drift indicator (recent win-rate vs all-time win-rate) is the earliest alarm for "the strategy stopped working" — when drift goes negative 5 points or more, that's a signal to pause and review the screener before continuing to deploy capital.
+All filters apply to every section including the daily breakdown.
+
+**Two earliest-alarm signals worth watching:**
+
+1. **Today-vs-yesterday verdict turns ⚠️ weaker** — immediate signal that recent config changes or the current regime aren't working. Most useful while actively tuning.
+2. **Regime drift in win rate goes ≤ -5 points** — slower-moving signal that the strategy has degraded vs its baseline. Independent of calendar-day variance; survives a single bad day. Catches drift before absolute PnL turns negative.
+
+Both fire before lessons-system threshold evolution responds (which needs 5+ closes), so they're the user-facing alarms for "pause and review."
 
 ### Threshold evolution
 
