@@ -449,7 +449,18 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 | `maxDeployAmount` | `50` | Maximum SOL cap per position |
 | `gasReserve` | `0.2` | Minimum SOL to keep for gas |
 | `minSolToOpen` | `0.55` | Minimum wallet SOL before opening |
-| `outOfRangeWaitMinutes` | `30` | Minutes OOR before acting |
+| `outOfRangeWaitMinutes` | `30` | Minutes OOR before acting (legacy symmetric; falls through to Up/Down) |
+| `outOfRangeWaitMinutesUp` | `30` | Minutes OOR upside (price ran above range) before closing — try `60–90` for bid-ask SOL to let pumps retrace |
+| `outOfRangeWaitMinutesDown` | `30` | Minutes OOR downside (price fell below range) before closing — try `15–20` to exit failed dip-buys fast |
+| `outOfRangeBinsToCloseUp` | `10` | Immediate-close threshold for upside (Rule 3: pumped far above) |
+| `outOfRangeBinsToCloseDown` | `10` | Immediate-close threshold for downside (Rule 6: dumped far below) |
+| `repeatDeployCooldownEnabled` | `true` | Master switch for cooldown after streaks |
+| `repeatDeployCooldownMode` | `"winners"` | `"winners"` rotates after win-streak (rotate-winners), `"losers"` cuts after loss-streak (let-winners-run / momentum), `"both"` does either |
+| `repeatDeployCooldownTriggerCount` | `3` | Streak length that triggers cooldown |
+| `repeatDeployCooldownHours` | `12` | Cooldown duration |
+| `repeatDeployCooldownScope` | `"token"` | `"pool"`, `"token"` (base mint across pools), or `"both"` |
+| `repeatDeployCooldownLosingPnlPctMax` | `0` | Deploy counts as losing when `pnl_pct ≤ this` |
+| `repeatDeployCooldownLosingFeeEarnedPctMax` | `0.5` | …or when `fee_earned_pct ≤ this` |
 | `stopLossPct` | `-50` | Close position if PnL falls below this % |
 | `takeProfitPct` | `5` | Close position if PnL reaches this % |
 | `trailingTakeProfit` | `true` | Enable trailing-TP exits |
@@ -545,6 +556,32 @@ Add a lesson manually:
 ```bash
 node cli.js lessons add "Never deploy into pump.fun tokens under 2h old"
 ```
+
+Each closed position is also tagged with a machine-readable `close_reason_tag` (`stop_loss`, `take_profit`, `pumped_above_range`, `dumped_below_range`, `oor_upside`, `oor_downside`, `trailing_tp`, `low_yield`, `rug_filter`, `manual`, `agent_decision`) so historical outcomes can be filtered and aggregated cleanly without grepping prose.
+
+### Analyzing performance
+
+```bash
+node scripts/analyze-lessons.js
+```
+
+Reads `lessons.json` and prints a formatted report covering:
+- Summary stats (count, win rate, avg/median PnL, total PnL, fees, avg hold)
+- Distribution by close-reason tag (which exit rules are firing and how well)
+- Top winner and loser tokens by aggregate PnL
+- Best and worst individual closes
+- Recent (last 20) vs all-time regime comparison with a drift indicator
+
+Filters:
+```bash
+node scripts/analyze-lessons.js --last 50
+node scripts/analyze-lessons.js --since 2026-05-29
+node scripts/analyze-lessons.js --token ALIENS
+node scripts/analyze-lessons.js --tag take_profit
+node scripts/analyze-lessons.js --json | jq '.byReason'
+```
+
+The regime drift indicator (recent win-rate vs all-time win-rate) is the earliest alarm for "the strategy stopped working" — when drift goes negative 5 points or more, that's a signal to pause and review the screener before continuing to deploy capital.
 
 ### Threshold evolution
 

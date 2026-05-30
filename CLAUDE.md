@@ -88,7 +88,16 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 | gasReserve | management | 0.2 |
 | positionSizePct | management | 0.35 |
 | minSolToOpen | management | 0.55 |
-| outOfRangeWaitMinutes | management | 30 |
+| outOfRangeWaitMinutes | management | 30 (legacy symmetric) |
+| outOfRangeWaitMinutesUp / Down | management | 30 / 30 — asymmetric override per direction. Up = price ran past upper bin; Down = price fell through lower bin |
+| outOfRangeBinsToCloseUp / Down | management | 10 / 10 — immediate-close thresholds for "pumped far above" (Rule 3) and "dumped far below" (Rule 6) |
+| repeatDeployCooldownEnabled | management | true |
+| repeatDeployCooldownMode | management | "winners" \| "losers" \| "both". Default "winners" cooldowns winning streaks (rotate-winners / mean reversion). "losers" cooldowns losing streaks (let winners run / momentum). "both" cooldowns either |
+| repeatDeployCooldownTriggerCount | management | 3 (streak length) |
+| repeatDeployCooldownHours | management | 12 |
+| repeatDeployCooldownScope | management | "pool" \| "token" \| "both" (default "token" — cooldown applies to the base mint across pools) |
+| repeatDeployCooldownLosingPnlPctMax | management | 0 — deploy counts as "losing" when pnl_pct ≤ this |
+| repeatDeployCooldownLosingFeeEarnedPctMax | management | 0.5 — or when fee_earned_pct ≤ this |
 | stopLossPct / takeProfitPct | management | -50 / 5 |
 | trailingTriggerPct / trailingDropPct | management | 3 / 1.5 |
 | trailingPeakConfirmDelayMs / Tolerance | management | 15000 / 0.85 |
@@ -106,6 +115,33 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 The `swaps.*`, `lessons.*`, `lowYieldCooldownHours`, and `trailing*Confirm*` keys also accept env-var overrides (priority: user-config.json > env > default). See `.env.example` for the env names.
 
 **`computeDeployAmount(walletSol)`** — scales position size with wallet balance (compounding). Formula: `clamp(deployable × positionSizePct, floor=deployAmountSol, ceil=maxDeployAmount)`.
+
+---
+
+## Strategy Notes
+
+The default deploy is **bid-ask single-side SOL** with `bins_above: 0` — not a symmetric bid-ask. Liquidity is placed only at bins below the current active bin, in a barbell-weighted distribution (`StrategyType.BidAsk`). This is a "buy the dip" ladder: as price drops into bins, SOL is converted to base token at progressively lower prices, collecting fees on the way down; an upward bounce sells back at a higher basis. There is no liquidity above active, so an upward pump leaves the position idle until either Rule 3 (pumped far above range) or Rule 4 (oor_upside timeout) closes it.
+
+**Deterministic close rules** (`index.js getDeterministicCloseRule`, evaluated in order):
+
+| Rule | Trigger | Tag |
+|------|---------|-----|
+| 1 | pnl_pct ≤ stopLossPct | stop_loss |
+| 2 | pnl_pct ≥ takeProfitPct | take_profit |
+| 3 | active_bin > upper_bin + outOfRangeBinsToCloseUp | pumped_above_range |
+| 4 | active_bin > upper_bin AND minutes_oor ≥ outOfRangeWaitMinutesUp | oor_upside |
+| 6 | active_bin < lower_bin − outOfRangeBinsToCloseDown | dumped_below_range |
+| 7 | active_bin < lower_bin AND minutes_oor ≥ outOfRangeWaitMinutesDown | oor_downside |
+| 5 | fee_per_tvl_24h < minFeePerTvl24h AND age ≥ minAgeBeforeYieldCheck | low_yield |
+
+Trailing TP runs as a parallel mechanism in the PnL poller and uses `trailingTriggerPct` / `trailingDropPct` with peak/drop recheck windows.
+
+**Repeat-deploy cooldown semantics** — defends against two distinct problems depending on `repeatDeployCooldownMode`:
+- `winners` (default): rotate after winning streaks. Bounds capital concentration on any one token; protects against alpha-decay as TVL discovers a hot pool; defense-in-depth against signal-spoofing. Trade-off: forces exits from working positions, opportunity cost on momentum runs.
+- `losers`: cut after losing streaks. Lets winners compound; cuts persistent underperformers fast. Trade-off: unbounded same-token exposure if a winner keeps producing.
+- `both`: cooldown either streak — bounds both tails at the cost of more rotation.
+
+Primary rug protection is the screener's wash/rugpull/bot-holder/concentration filters, NOT the cooldown. The cooldown's real purpose is portfolio-construction and alpha-decay handling.
 
 ---
 
@@ -212,8 +248,9 @@ const actualBaseFee = baseFactor > 0
 `lessons.js` records closed position performance and auto-derives lessons. Key points:
 - `getLessonsForPrompt({ agentType })` — injects relevant lessons into system prompt
 - `evolveThresholds()` — adjusts screening thresholds based on winners vs losers
-- Performance recorded via `recordPerformance()` called from executor.js after `close_position`
-- **Known issue**: `evolveThresholds()` references `maxVolatility` and `minFeeTvlRatio` but config.js uses `minFeeActiveTvlRatio` and has no `maxVolatility` key — the evolution of these keys is a no-op
+- Performance recorded via `recordPerformance()` called from executor.js after `close_position`. Each row stores both the LLM's free-text `close_reason` and a machine-readable `close_reason_tag` (one of: `stop_loss`, `take_profit`, `pumped_above_range`, `dumped_below_range`, `oor_upside`, `oor_downside`, `trailing_tp`, `low_yield`, `rug_filter`, `manual`, `agent_decision`). The tag is set from the deterministic close rule when available (`index.js getDeterministicCloseRule`) and otherwise inferred by `classifyCloseReason()` regex matching.
+- Analyzer at `scripts/analyze-lessons.js` reads `lessons.json` and prints win-rate, PnL distribution by close-reason tag, top winner/loser tokens, best/worst individual closes, and a recent-vs-all-time regime drift indicator. Filters: `--last N`, `--since YYYY-MM-DD`, `--token SYMBOL`, `--tag TAG`. `--json` for machine-readable output. Backfills tags on rows recorded before the tagging feature shipped.
+- **Known issue**: `evolveThresholds()` references `maxVolatility` and `minFeeTvlRatio` but config.js uses `minFeeActiveTvlRatio` and has no `maxVolatility` key — the evolution of those specific keys is a no-op.
 
 ---
 
