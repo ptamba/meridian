@@ -1396,8 +1396,30 @@ async function drainTelegramQueue() {
   }
 }
 
+/**
+ * Normalize slash commands so both Telegram's @botname suffix form and an
+ * explicit /meridian_ prefix form work in groups with multiple bots.
+ *
+ *   /status                       → /status     (private DM, untouched)
+ *   /status@meridian_bot          → /status     (group, explicit target)
+ *   /meridian_status              → /status     (group, unambiguous prefix)
+ *   /meridian_close 1             → /close 1    (args preserved)
+ *   /meridian_status@meridian_bot → /status     (both forms at once)
+ *
+ * Non-command text is left untouched. The prefix is hardcoded to /meridian_
+ * for the canonical fork; rename here if you fork to a different project name.
+ */
+function normalizeTelegramCommand(text) {
+  if (!text) return text;
+  // /command@botname → /command
+  let n = text.replace(/^(\/[A-Za-z0-9_]+)@[A-Za-z0-9_]+/, "$1");
+  // /meridian_command → /command
+  n = n.replace(/^\/meridian_([A-Za-z0-9_]+)/i, "/$1");
+  return n;
+}
+
 async function telegramHandler(msg) {
-  const text = msg?.text?.trim();
+  const text = normalizeTelegramCommand((msg?.text || "").trim());
   if (!text) return;
   if (msg?.isCallback && text.startsWith("cfg:")) {
     try {

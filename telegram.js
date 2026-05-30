@@ -72,6 +72,8 @@ function isAuthorizedIncomingMessage(msg) {
   const incomingChatId = String(msg.chat?.id || "");
   const senderUserId = msg.from?.id != null ? String(msg.from.id) : null;
   const chatType = msg.chat?.type || "unknown";
+  const debug = process.env.TELEGRAM_DEBUG === "true";
+  const textPreview = String(msg.text || msg.callbackData || "").slice(0, 60);
 
   if (!chatId) {
     if (!_warnedMissingChatId) {
@@ -81,13 +83,19 @@ function isAuthorizedIncomingMessage(msg) {
     return false;
   }
 
-  if (incomingChatId !== chatId) return false;
+  if (incomingChatId !== chatId) {
+    if (debug) log("telegram_debug", `Drop: chat_id mismatch (incoming=${incomingChatId} expected=${chatId}) text="${textPreview}"`);
+    return false;
+  }
 
   // If a thread id is configured, only accept messages from that topic
   // (forum supergroups). Messages from other topics are ignored.
   if (threadId != null) {
     const incomingThreadId = msg.message_thread_id ?? msg.chat?.message_thread_id ?? null;
-    if (incomingThreadId !== threadId) return false;
+    if (incomingThreadId !== threadId) {
+      if (debug) log("telegram_debug", `Drop: thread_id mismatch (incoming=${incomingThreadId} expected=${threadId}) text="${textPreview}"`);
+      return false;
+    }
   }
 
   if (chatType !== "private" && ALLOWED_USER_IDS.size === 0) {
@@ -99,9 +107,13 @@ function isAuthorizedIncomingMessage(msg) {
   }
 
   if (ALLOWED_USER_IDS.size > 0) {
-    if (!senderUserId || !ALLOWED_USER_IDS.has(senderUserId)) return false;
+    if (!senderUserId || !ALLOWED_USER_IDS.has(senderUserId)) {
+      if (debug) log("telegram_debug", `Drop: sender ${senderUserId} not in TELEGRAM_ALLOWED_USER_IDS text="${textPreview}"`);
+      return false;
+    }
   }
 
+  if (debug) log("telegram_debug", `Accept: from=${senderUserId} chat=${incomingChatId} thread=${msg.message_thread_id ?? "none"} text="${textPreview}"`);
   return true;
 }
 
