@@ -154,6 +154,13 @@ export const config = {
     lowYieldCooldownHours: num(u.lowYieldCooldownHours, "LOW_YIELD_COOLDOWN_HOURS", 4),
     // SOL mode — positions, PnL, and balances reported in SOL instead of USD
     solMode:               u.solMode               ?? false,
+    // Orphan-token sweep — safety net for base tokens left in the wallet after a
+    // close (manual close, OKX zap-out dust, or the post-close auto-swap missing
+    // because the withdrawn token hadn't settled when balances were checked).
+    // Each management cycle, any non-SOL/USDC token NOT tied to an open position
+    // and worth >= sweepMinUsd is swapped back to SOL.
+    sweepOrphanTokensEnabled: u.sweepOrphanTokensEnabled ?? true,
+    sweepMinUsd:           u.sweepMinUsd           ?? 1.0,
   },
 
   // ─── Strategy Mapping ───────────────────

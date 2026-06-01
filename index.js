@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
-import { getWalletBalances } from "./tools/wallet.js";
+import { getWalletBalances, swapToken } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
@@ -21,6 +21,7 @@ import {
   editMessageWithButtons,
   answerCallbackQuery,
   notifyOutOfRange,
+  notifySwap,
   isEnabled as telegramEnabled,
   createLiveMessage,
 } from "./telegram.js";
@@ -192,6 +193,52 @@ function stopCronJobs() {
   _cronTasks = [];
 }
 
+/**
+ * Orphan-token sweep — safety net for base tokens stranded in the wallet after a
+ * close that the post-close auto-swap (executor.js) missed: a manual/UI close, OKX
+ * zap-out dust, or the withdrawn token not having settled when close_position
+ * checked balances. Each management cycle, any non-SOL/USDC token NOT tied to an
+ * open position and worth >= sweepMinUsd is swapped back to SOL.
+ *
+ * @param {Array} openPositions positions currently open — their base_mints are never swept.
+ */
+async function sweepOrphanTokens(openPositions = []) {
+  if (!config.management.sweepOrphanTokensEnabled) return;
+  try {
+    const balances = await getWalletBalances();
+    const tokens = balances?.tokens || [];
+    if (tokens.length === 0) return;
+
+    const positionMints = new Set(openPositions.map((p) => p.base_mint).filter(Boolean));
+    const protectedMints = new Set([config.tokens.SOL, config.tokens.USDC]);
+    const minUsd = config.management.sweepMinUsd;
+
+    const orphans = tokens.filter((t) =>
+      t.mint &&
+      !positionMints.has(t.mint) &&
+      !protectedMints.has(t.mint) &&
+      (t.balance ?? 0) > 0 &&
+      (t.usd ?? 0) >= minUsd
+    );
+    if (orphans.length === 0) return;
+
+    for (const t of orphans) {
+      const label = t.symbol || t.mint.slice(0, 8);
+      log("sweep", `Sweeping orphan ${label} ($${t.usd}, not tied to any open position) → SOL`);
+      const res = await swapToken({ input_mint: t.mint, output_mint: "SOL", amount: t.balance });
+      if (res?.success && res.tx) {
+        const solOut = res.amount_out != null ? Number(res.amount_out) / 1e9 : null;
+        log("sweep", `Swept ${label} → SOL (tx ${res.tx})`);
+        notifySwap({ inputSymbol: label, outputSymbol: "SOL", amountIn: t.balance, amountOut: solOut, tx: res.tx }).catch(() => {});
+      } else if (res && !res.dry_run) {
+        log("sweep_warn", `Sweep of ${label} failed: ${res.error || "unknown error"}`);
+      }
+    }
+  } catch (e) {
+    log("sweep_warn", `Orphan sweep failed: ${e.message}`);
+  }
+}
+
 export async function runManagementCycle({ silent = false } = {}) {
   if (_managementBusy) return null;
   _managementBusy = true;
@@ -352,6 +399,9 @@ After executing, write a brief one-line result per position.
       log("cron", `Post-management: ${afterCount}/${config.risk.maxPositions} positions — triggering screening`);
       runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
     }
+
+    // Sweep any orphan base tokens stranded in the wallet (post-close auto-swap missed).
+    await sweepOrphanTokens(afterPositions?.positions || positions);
   } catch (error) {
     log("cron_error", `Management cycle failed: ${error.message}`);
     mgmtReport = `Management cycle failed: ${error.message}`;

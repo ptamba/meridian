@@ -103,6 +103,8 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 | trailingPeakConfirmDelayMs / Tolerance | management | 15000 / 0.85 |
 | trailingDropConfirmDelayMs / TolerancePct | management | 15000 / 1.0 |
 | lowYieldCooldownHours | management | 4 |
+| sweepOrphanTokensEnabled | management | true — sweep stranded base tokens to SOL each management cycle |
+| sweepMinUsd | management | 1.0 — only sweep orphan tokens worth ≥ this (avoids burning gas on dust) |
 | lessonsMinEvolvePositions / MaxChangePerStep | lessons | 5 / 0.20 |
 | deployRelaySlippageBps | swaps | 500 (Jupiter Ultra zap-in, 5%) |
 | addLiquidityWideRangePct | swaps | 10 (Meteora wide-range, percent) |
@@ -151,6 +153,8 @@ Primary rug protection is the screener's wash/rugpull/bot-holder/concentration f
 2. **Monitor**: management cron → `getMyPositions()` → `getPositionPnl()` → OOR detection → pool-memory snapshots
 3. **Close**: `close_position` → `recordPerformance()` in lessons.js → auto-swap base token to SOL → Telegram notify
 4. **Learn**: `evolveThresholds()` runs on performance data → updates config.screening → persists to user-config.json
+
+**Orphan-token sweep** (`index.js sweepOrphanTokens`): runs at the end of every management cycle as a safety net. The post-close auto-swap in `executor.js` can miss base tokens — manual/UI close (never ran `close_position`), OKX zap-out dust, or a timing race where the withdrawn token hadn't settled in the wallet when `close_position` checked balances (silent skip, no error logged). The sweep swaps any non-SOL/USDC token NOT tied to an open position and worth ≥ `sweepMinUsd` back to SOL. Open positions' `base_mint`s are always protected. Gated on `sweepOrphanTokensEnabled`; no-op under DRY_RUN (swapToken early-returns, no notification).
 
 ---
 
