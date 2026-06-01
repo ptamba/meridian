@@ -149,6 +149,13 @@ export async function swapToken({
   input_mint  = normalizeMint(input_mint);
   output_mint = normalizeMint(output_mint);
 
+  // Refuse a no-op same-mint swap (e.g. SOL → SOL). Jupiter would reject it anyway,
+  // but guard here so callers can't accidentally route a balance into itself.
+  if (input_mint && input_mint === output_mint) {
+    log("swap_warn", `Refusing same-mint swap (${input_mint})`);
+    return { success: false, skipped: true, error: "input and output mint are identical — nothing to swap" };
+  }
+
   if (process.env.DRY_RUN === "true") {
     return {
       dry_run: true,

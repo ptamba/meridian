@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
-import { getWalletBalances, swapToken } from "./tools/wallet.js";
+import { getWalletBalances, swapToken, normalizeMint } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
@@ -211,15 +211,22 @@ async function sweepOrphanTokens(openPositions = []) {
 
     const positionMints = new Set(openPositions.map((p) => p.base_mint).filter(Boolean));
     const protectedMints = new Set([config.tokens.SOL, config.tokens.USDC]);
+    // getWalletBalances returns native SOL in tokens[] too, and its mint is NOT the
+    // wrapped-SOL mint — so a mint-only check misses it (it identifies SOL by symbol).
+    // Guard by symbol AND normalized mint so we never try to swap SOL/USDC into SOL.
+    const protectedSymbols = new Set(["SOL", "WSOL", "USDC"]);
     const minUsd = config.management.sweepMinUsd;
 
-    const orphans = tokens.filter((t) =>
-      t.mint &&
-      !positionMints.has(t.mint) &&
-      !protectedMints.has(t.mint) &&
-      (t.balance ?? 0) > 0 &&
-      (t.usd ?? 0) >= minUsd
-    );
+    const orphans = tokens.filter((t) => {
+      if (!t.mint) return false;                                              // native SOL w/ no mint
+      if (normalizeMint(t.mint) === config.tokens.SOL) return false;          // native or wrapped SOL
+      if (protectedMints.has(t.mint)) return false;                           // wrapped SOL / USDC
+      if (protectedSymbols.has(String(t.symbol || "").toUpperCase())) return false;
+      if (positionMints.has(t.mint)) return false;                            // base token of an open position
+      if ((t.balance ?? 0) <= 0) return false;
+      if ((t.usd ?? 0) < minUsd) return false;
+      return true;
+    });
     if (orphans.length === 0) return;
 
     for (const t of orphans) {
