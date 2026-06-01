@@ -471,6 +471,10 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 | `trailingDropConfirmDelayMs` | `15000` | Wait this long before confirming a trailing drop |
 | `trailingDropConfirmTolerancePct` | `1.0` | Confirm drop if recheck stays within this band |
 | `lowYieldCooldownHours` | `4` | Cooldown after a "low yield" close (0 disables) |
+| `sweepOrphanTokensEnabled` | `true` | Sweep stranded base tokens to SOL at the end of each management cycle |
+| `sweepMinUsd` | `1.0` | Only sweep orphan tokens worth ≥ this (avoids burning gas on dust) |
+
+> **Orphan-token sweep.** When a position closes, Meridian swaps the base token back to SOL automatically. That auto-swap can be missed — a position closed manually in the Meteora UI, OKX zap-out dust, or a timing race where the withdrawn token hadn't landed in the wallet yet when the close checked balances (a silent skip with no error logged). To catch these, the end of every management cycle sweeps any non-SOL/USDC token **not** tied to an open position and worth ≥ `sweepMinUsd` back to SOL. Open positions' tokens are always protected, and the sweep is a no-op under `DRY_RUN`. Disable with `sweepOrphanTokensEnabled: false` if you hold other tokens in the wallet.
 
 ### Lessons
 
