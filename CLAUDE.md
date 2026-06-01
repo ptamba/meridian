@@ -99,6 +99,7 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 | repeatDeployCooldownLosingPnlPctMax | management | 0 — deploy counts as "losing" when pnl_pct ≤ this |
 | repeatDeployCooldownLosingFeeEarnedPctMax | management | 0.5 — or when fee_earned_pct ≤ this |
 | stopLossPct / takeProfitPct | management | -50 / 5 |
+| stopLossConfirmSamples | management | 2 — stop must breach on N consecutive PnL samples before firing (debounces transient bad ticks); 1 = legacy fire-on-first |
 | trailingTriggerPct / trailingDropPct | management | 3 / 1.5 |
 | trailingPeakConfirmDelayMs / Tolerance | management | 15000 / 0.85 |
 | trailingDropConfirmDelayMs / TolerancePct | management | 15000 / 1.0 |
@@ -128,7 +129,7 @@ The default deploy is **bid-ask single-side SOL** with `bins_above: 0` — not a
 
 | Rule | Trigger | Tag |
 |------|---------|-----|
-| 1 | pnl_pct ≤ stopLossPct | stop_loss |
+| 1 | pnl_pct ≤ stopLossPct (breach confirmed on ≥ stopLossConfirmSamples consecutive samples) | stop_loss |
 | 2 | pnl_pct ≥ takeProfitPct | take_profit |
 | 3 | active_bin > upper_bin + outOfRangeBinsToCloseUp | pumped_above_range |
 | 4 | active_bin > upper_bin AND minutes_oor ≥ outOfRangeWaitMinutesUp | oor_upside |
@@ -252,7 +253,7 @@ const actualBaseFee = baseFactor > 0
 `lessons.js` records closed position performance and auto-derives lessons. Key points:
 - `getLessonsForPrompt({ agentType })` — injects relevant lessons into system prompt
 - `evolveThresholds()` — adjusts screening thresholds based on winners vs losers
-- Performance recorded via `recordPerformance()` called from executor.js after `close_position`. Each row stores both the LLM's free-text `close_reason` and a machine-readable `close_reason_tag` (one of: `stop_loss`, `take_profit`, `pumped_above_range`, `dumped_below_range`, `oor_upside`, `oor_downside`, `trailing_tp`, `low_yield`, `rug_filter`, `manual`, `agent_decision`). The tag is set from the deterministic close rule when available (`index.js getDeterministicCloseRule`) and otherwise inferred by `classifyCloseReason()` regex matching.
+- Performance recorded via `recordPerformance()` called from executor.js after `close_position`. Each row stores both the LLM's free-text `close_reason` and a machine-readable `close_reason_tag` (one of: `stop_loss`, `take_profit`, `pumped_above_range`, `dumped_below_range`, `oor_upside`, `oor_downside`, `trailing_tp`, `low_yield`, `rug_filter`, `manual`, `agent_decision`). The tag is set from the deterministic close rule when available (`index.js getDeterministicCloseRule`) and otherwise inferred by `classifyCloseReason()`. That classifier matches by **earliest keyword position** in the reason text, not fixed priority — LLM close reasons often name several mechanisms in one line (e.g. "Low yield … — trailing TP/stop loss trigger"), and the true cause is stated first with boilerplate appended, so position-based matching avoids mis-tagging a low-yield close as stop_loss.
 - Analyzer at `scripts/analyze-lessons.js` reads `lessons.json` and prints: summary stats; PnL distribution by close-reason tag; top winner/loser tokens; best/worst individual closes; daily breakdown (last 7 calendar days); today-vs-yesterday section with explicit deltas and a `✅ improving / ➖ similar / ⚠️ weaker` verdict; recent-vs-all-time regime comparison with the same verdict shape. Filters: `--last N`, `--since YYYY-MM-DD`, `--token SYMBOL`, `--tag TAG`. `--json` for machine-readable output (keys: `summary`, `byReason`, `topWinners`, `topLosers`, `bestCloses`, `worstCloses`, `daily`, `todayVsYesterday`, `regime`). Backfills tags on rows recorded before the tagging feature shipped.
 - Two alarm signals worth automating into Telegram briefings if useful: (1) today-vs-yesterday verdict goes ⚠️ for two days running, (2) regime drift in win rate ≤ -5 points. Both lead the lessons threshold evolution by hours-to-days.
 - **Known issue**: `evolveThresholds()` references `maxVolatility` and `minFeeTvlRatio` but config.js uses `minFeeActiveTvlRatio` and has no `maxVolatility` key — the evolution of those specific keys is a no-op.

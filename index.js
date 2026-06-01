@@ -955,7 +955,15 @@ function getDeterministicCloseRule(position, managementConfig) {
   const oorBinsCloseUp   = managementConfig.outOfRangeBinsToCloseUp   ?? managementConfig.outOfRangeBinsToClose;
   const oorBinsCloseDown = managementConfig.outOfRangeBinsToCloseDown ?? managementConfig.outOfRangeBinsToClose;
 
-  if (!pnlSuspect && position.pnl_pct != null && position.pnl_pct <= managementConfig.stopLossPct) {
+  // Stop loss requires the breach to be confirmed across N samples. The counter is
+  // maintained by updatePnlAndCheckExits (which always runs before this in both the
+  // cron and the PnL poller), so here we only read it — never fire on a single tick.
+  const stopConfirmSamples = Math.max(1, managementConfig.stopLossConfirmSamples ?? 2);
+  if (
+    !pnlSuspect && position.pnl_pct != null &&
+    position.pnl_pct <= managementConfig.stopLossPct &&
+    (tracked?.stop_loss_breach_count ?? 0) >= stopConfirmSamples
+  ) {
     return { action: "CLOSE", rule: 1, tag: "stop_loss", reason: "stop loss" };
   }
   if (!pnlSuspect && position.pnl_pct != null && position.pnl_pct >= managementConfig.takeProfitPct) {

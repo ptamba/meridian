@@ -65,6 +65,7 @@
   "repeatDeployCooldownLosingFeeEarnedPctMax": 0.5,
   "minVolumeToRebalance": 1000,
   "stopLossPct": -50,
+  "stopLossConfirmSamples": 2,
   "takeProfitPct": 5,
   "minFeePerTvl24h": 7,
   "minAgeBeforeYieldCheck": 60,

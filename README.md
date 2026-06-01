@@ -462,6 +462,7 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 | `repeatDeployCooldownLosingPnlPctMax` | `0` | Deploy counts as losing when `pnl_pct ≤ this` |
 | `repeatDeployCooldownLosingFeeEarnedPctMax` | `0.5` | …or when `fee_earned_pct ≤ this` |
 | `stopLossPct` | `-50` | Close position if PnL falls below this % |
+| `stopLossConfirmSamples` | `2` | Stop must breach the threshold on this many consecutive PnL samples before firing (debounces transient bad ticks; `1` = fire on first) |
 | `takeProfitPct` | `5` | Close position if PnL reaches this % |
 | `trailingTakeProfit` | `true` | Enable trailing-TP exits |
 | `trailingTriggerPct` | `3` | Arm trailing once PnL crosses this % |

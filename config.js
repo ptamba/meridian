@@ -131,6 +131,12 @@ export const config = {
     repeatDeployCooldownLosingFeeEarnedPctMax:  u.repeatDeployCooldownLosingFeeEarnedPctMax  ?? 0.5,
     minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
     stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
+    // Stop loss must breach the threshold on this many consecutive PnL samples
+    // before firing — defends against a transient bad PnL tick (a corrupted bin
+    // snapshot can feed the same wrong value to both reported & derived PnL, so
+    // the cross-source pnlSanityMaxDiffPct check won't catch it). 1 = fire on
+    // first observation (legacy behaviour).
+    stopLossConfirmSamples: u.stopLossConfirmSamples ?? 2,
     takeProfitPct:         u.takeProfitPct         ?? u.takeProfitFeePct ?? 5,
     minFeePerTvl24h:       u.minFeePerTvl24h       ?? 7,
     minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 60, // minutes before low yield can trigger close

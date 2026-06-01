@@ -409,12 +409,29 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
 
   if (changed) save(state);
 
-  // ── Stop loss ──────────────────────────────────────────────────
-  if (!pnl_pct_suspicious && currentPnlPct != null && mgmtConfig.stopLossPct != null && currentPnlPct <= mgmtConfig.stopLossPct) {
-    return {
-      action: "STOP_LOSS",
-      reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.stopLossPct}%`,
-    };
+  // ── Stop loss (debounced) ──────────────────────────────────────
+  // Require the breach to persist across N consecutive samples before firing.
+  // A single corrupted PnL tick (e.g. a bad bin snapshot that feeds the same
+  // wrong value to both reported and derived PnL, slipping past the cross-source
+  // pnlSanityMaxDiffPct guard) otherwise triggers a false stop on a healthy
+  // position. Counter resets when a trustworthy reading comes back above the stop.
+  const stopConfirmSamples = Math.max(1, mgmtConfig.stopLossConfirmSamples ?? 2);
+  const stopBreached = !pnl_pct_suspicious && currentPnlPct != null &&
+    mgmtConfig.stopLossPct != null && currentPnlPct <= mgmtConfig.stopLossPct;
+  if (stopBreached) {
+    pos.stop_loss_breach_count = (pos.stop_loss_breach_count ?? 0) + 1;
+    save(state);
+    if (pos.stop_loss_breach_count >= stopConfirmSamples) {
+      return {
+        action: "STOP_LOSS",
+        reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.stopLossPct}% (confirmed ${pos.stop_loss_breach_count}/${stopConfirmSamples} samples)`,
+      };
+    }
+    log("state", `Stop-loss breach ${pos.stop_loss_breach_count}/${stopConfirmSamples} for ${position_address} (PnL ${currentPnlPct.toFixed(2)}%) — awaiting confirmation`);
+  } else if (!pnl_pct_suspicious && pos.stop_loss_breach_count) {
+    // trustworthy reading back above the stop — clear the breach streak
+    pos.stop_loss_breach_count = 0;
+    save(state);
   }
 
   // ── Trailing TP ────────────────────────────────────────────────
