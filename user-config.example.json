@@ -78,6 +78,8 @@
   "pnlSanityMaxDiffPct": 5,
   "lowYieldCooldownHours": 4,
   "solMode": false,
+  "sweepOrphanTokensEnabled": true,
+  "sweepMinUsd": 1.0,
 
   "lessonsMinEvolvePositions": 5,
   "lessonsMaxChangePerStep": 0.20,
