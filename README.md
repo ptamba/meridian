@@ -573,6 +573,7 @@ node scripts/analyze-lessons.js
 Reads `lessons.json` and prints a formatted report covering:
 - **Summary stats** — count, win rate, avg/median PnL, total PnL, fees, avg hold
 - **Distribution by close-reason tag** — which exit rules are firing and how well
+- **Distribution by market-cap bucket** — PnL by mcap at deploy (`<250k / 250–500k / 500k–1M / 1M–3M / 3M+`); the direct input for deciding whether to move `minMcap`
 - **Top winner and loser tokens** by aggregate PnL
 - **Best and worst individual closes** (top/bottom 5 by PnL %)
 - **Daily breakdown** — one row per calendar day (last 7 days with closes). Same column shape as the by-reason/by-token tables so trends are directly comparable
@@ -596,6 +597,15 @@ All filters apply to every section including the daily breakdown.
 2. **Regime drift in win rate goes ≤ -5 points** — slower-moving signal that the strategy has degraded vs its baseline. Independent of calendar-day variance; survives a single bad day. Catches drift before absolute PnL turns negative.
 
 Both fire before lessons-system threshold evolution responds (which needs 5+ closes), so they're the user-facing alarms for "pause and review."
+
+#### Cooldown impact on the screener
+
+```bash
+node scripts/analyze-cooldowns.js
+node scripts/analyze-cooldowns.js --since 2026-05-29 --json
+```
+
+Parses `logs/agent-*.log` — the only historical record of deploys the cooldown *blocked* (`lessons.json` and `pool-memory.json` only hold positions that actually opened). Reports: (1) **repeat-deploy cooldown triggers** — the N-consecutive-streak filter firing, split by `winners`/`losers` mode and by token; (2) **screener candidates filtered** by an active cooldown; (3) **deploy-time skips**. Sections 2–3 are aggregate across all cooldown sources (repeat-deploy, OOR-streak, low-yield), since the filter/skip log lines don't record which one was active — only section 1 is attributable to the consecutive-streak filter specifically.
 
 ### Threshold evolution
 

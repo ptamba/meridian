@@ -15,9 +15,13 @@
  * Sections in the default text report:
  *   1. Summary (count, win rate, avg/median PnL, total PnL)
  *   2. Distribution by close_reason_tag (count, win rate, avg PnL, avg hold time)
- *   3. Win-by-token (top 10 winners and losers, by aggregate PnL)
- *   4. Best / worst individual closes
- *   5. Recent vs all-time regime comparison (last 20 vs full history)
+ *   3. Distribution by market-cap bucket (mcap at deploy) — informs minMcap tuning
+ *   4. Win-by-token (top 10 winners and losers, by aggregate PnL)
+ *   5. Best / worst individual closes
+ *   6. Recent vs all-time regime comparison (last 20 vs full history)
+ *
+ * --json keys: summary, byReason, byMcap, topWinners, topLosers, bestCloses,
+ *   worstCloses, daily, todayVsYesterday, regime.
  */
 
 import fs from "fs";
@@ -118,6 +122,27 @@ function bucketStats(rows) {
   };
 }
 
+// ─── Market-cap bucketing ────────────────────────────────────────
+// Mcap is recorded per close in signal_snapshot.mcap (at deploy time).
+const MCAP_BUCKETS = [
+  ["< $250k",     0,          250_000],
+  ["$250k–500k",  250_000,    500_000],
+  ["$500k–1M",    500_000,    1_000_000],
+  ["$1M–3M",      1_000_000,  3_000_000],
+  ["$3M+",        3_000_000,  Infinity],
+];
+const MCAP_ORDER = [...MCAP_BUCKETS.map((b) => b[0]), "unknown"];
+
+function mcapOf(r) {
+  return num(r.signal_snapshot?.mcap) ?? num(r.mcap);
+}
+function mcapBucketLabel(r) {
+  const m = mcapOf(r);
+  if (m == null) return "unknown";
+  for (const [label, lo, hi] of MCAP_BUCKETS) if (m >= lo && m < hi) return label;
+  return "unknown";
+}
+
 // ─── Renderers ───────────────────────────────────────────────────
 function fmtStatsLine(s) {
   return `${lpad(s.count, 4)}  ${lpad((s.winRate * 100).toFixed(0) + "%", 5)}  ` +
@@ -156,6 +181,17 @@ function renderText(report) {
   lines.push("  " + pad("tag", 22) + STATS_HEADER);
   for (const [tag, s] of report.byReason) {
     lines.push("  " + pad(tag, 22) + fmtStatsLine(s));
+  }
+
+  // By market cap (at deploy)
+  if (report.byMcap && report.byMcap.length) {
+    lines.push("");
+    lines.push("BY MARKET CAP (mcap at deploy)");
+    lines.push("-".repeat(78));
+    lines.push("  " + pad("mcap bucket", 22) + STATS_HEADER);
+    for (const [label, s] of report.byMcap) {
+      lines.push("  " + pad(label, 22) + fmtStatsLine(s));
+    }
   }
 
   // Top winners and losers (by token aggregate)
@@ -302,6 +338,12 @@ function main() {
     .map(([tag, rs]) => [tag, bucketStats(rs)])
     .sort((a, b) => b[1].count - a[1].count);
 
+  // By market cap (at deploy) — kept in ascending bucket order, not by count
+  const byMcapMap = groupBy(rows, mcapBucketLabel);
+  const byMcap = MCAP_ORDER
+    .filter((label) => byMcapMap.has(label))
+    .map((label) => [label, bucketStats(byMcapMap.get(label))]);
+
   // By token (winners + losers)
   const byTokenMap = groupBy(rows, (r) => r.pool_name || "?");
   const byToken = [...byTokenMap.entries()]
@@ -356,6 +398,7 @@ function main() {
     },
     filtered: { appliedFilters, totalAvailable: all.length, totalAnalyzed: rows.length },
     byReason,
+    byMcap,
     topWinners,
     topLosers,
     bestCloses,
