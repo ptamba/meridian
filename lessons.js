@@ -71,33 +71,28 @@ export function classifyCloseReason(reasonText) {
   const t = String(reasonText || "").toLowerCase();
   if (!t) return "agent_decision";
 
-  // Close-reason strings are often LLM free-text that name SEVERAL mechanisms in
-  // one line, e.g. "Low yield: fee/TVL 0.92% < min 7% — trailing TP/stop loss
-  // trigger". A fixed-priority scan mis-tags those: it would see "stop loss" and
-  // return stop_loss even though the actual cause (stated first) is low yield.
-  // The real cause is almost always at the FRONT of the string, with mechanism
-  // boilerplate appended — so match by earliest position in the text, not by a
-  // fixed priority. Ties (same index) fall back to array order = specificity.
-  const patterns = [
-    ["pumped_above_range", /pumped|above range|rule 3|run.*up.*range/],
-    ["dumped_below_range", /dumped|below range|rule 6/],
-    ["oor_downside",       /oor.*downside|out.of.range.*down|downside/],
-    ["oor_upside",         /oor.*upside|out.of.range.*up|upside/],
-    ["low_yield",          /low.yield|fee.{0,5}tvl/],
-    ["rug_filter",         /wash|rugpull|rug/],
-    ["trailing_tp",        /trailing/],
-    ["stop_loss",          /\bstop[\s_-]?loss\b|\bsl\b/],
-    ["take_profit",        /\btake[\s_-]?profit\b|\btp\b/],
-    ["oor_upside",         /oor|out.of.range|range/],  // legacy single-direction OOR was always upside in this strategy
-    ["manual",             /manual|user|telegram/],
-  ];
-
-  let best = null;
-  for (const [tag, re] of patterns) {
-    const m = t.match(re);
-    if (m && (best === null || m.index < best.index)) best = { tag, index: m.index };
-  }
-  return best ? best.tag : "agent_decision";
+  // Close-reason strings are LLM free-text and frequently carry a leading exit-alert
+  // banner — e.g. "⚡ Trailing TP:" — prepended to the REAL cause:
+  //   "⚡ Trailing TP: Stop loss triggered -26% <= -15%"   (actually a stop_loss)
+  //   "⚡ Trailing TP: Low yield: fee/TVL 3% < min 7%"     (actually low_yield)
+  //   "CLOSE — ⚡ Trailing TP: Out of range for 30m"       (actually oor)
+  // and may also name unrelated mechanisms in trailing boilerplate
+  //   "Low yield: ... — trailing TP/stop loss trigger"     (actually low_yield)
+  // So neither raw keyword priority NOR earliest-position is safe. Match by each
+  // cause's CHARACTERISTIC SYNTAX, strongest cause first:
+  //   real stop fired   => "stop loss" AND a "<= -N%" / "PnL -N%" threshold
+  //   real trailing exit => "peak X% → current Y%" / "dropped Z%"
+  if (/pumped|above range|\brule 3\b|run.*up.*range/.test(t))   return "pumped_above_range";
+  if (/dumped|below range|\brule 6\b/.test(t))                  return "dumped_below_range";
+  if (/\bstop[\s_-]?loss\b/.test(t) && /<=|\bpnl\b\s*-?[\d.]+ ?%/.test(t)) return "stop_loss";
+  if (/low.?yield|fee.{0,5}tvl/.test(t))                        return "low_yield";
+  if (/out.of.range|\boor\b/.test(t))  return /down/.test(t) ? "oor_downside" : "oor_upside";
+  if (/wash|rugpull|rug/.test(t))                               return "rug_filter";
+  if (/peak\s*-?[\d.]+ ?%?\s*(→|->|to)\s*current|dropped\s*[\d.]+ ?%/.test(t) || /\btrailing\b/.test(t))
+    return "trailing_tp";
+  if (/\btake[\s_-]?profit\b|\btp\b/.test(t))                   return "take_profit";
+  if (/manual|user|telegram/.test(t))                           return "manual";
+  return "agent_decision";
 }
 
 function buildSignalSnapshot(perf) {

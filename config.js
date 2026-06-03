@@ -132,11 +132,12 @@ export const config = {
     minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
     stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
     // Stop loss must breach the threshold on this many consecutive PnL samples
-    // before firing — defends against a transient bad PnL tick (a corrupted bin
-    // snapshot can feed the same wrong value to both reported & derived PnL, so
-    // the cross-source pnlSanityMaxDiffPct check won't catch it). 1 = fire on
-    // first observation (legacy behaviour).
-    stopLossConfirmSamples: u.stopLossConfirmSamples ?? 2,
+    // before firing. Default 1 = fire on first observation. NOTE: values > 1
+    // delay the stop by ~1 poll cycle (~30s) per extra sample, and on a fast
+    // crash the position keeps falling during the wait — observed a stop confirm
+    // at -26% instead of -15% with this set to 2. Only raise above 1 if transient
+    // bad PnL ticks are causing false stops (prefer a value-based sanity check).
+    stopLossConfirmSamples: u.stopLossConfirmSamples ?? 1,
     takeProfitPct:         u.takeProfitPct         ?? u.takeProfitFeePct ?? 5,
     minFeePerTvl24h:       u.minFeePerTvl24h       ?? 7,
     minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 60, // minutes before low yield can trigger close

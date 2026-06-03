@@ -10,6 +10,9 @@
  *   --since YYYY-MM-DD Filter by recorded_at >= date
  *   --token SYMBOL     Filter by pool_name substring (case-insensitive)
  *   --tag TAG          Filter by close_reason_tag (e.g. take_profit, stop_loss)
+ *   --retag            Re-derive every close_reason_tag from close_reason with the
+ *                      current classifier (corrects history mis-tagged by an older
+ *                      classifier; does not mutate lessons.json)
  *   --json             Emit JSON instead of formatted text
  *
  * Sections in the default text report:
@@ -33,7 +36,7 @@ const LESSONS_FILE = path.join(__dirname, "..", "lessons.json");
 
 // ─── Args ────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  const args = { last: null, since: null, token: null, tag: null, json: false };
+  const args = { last: null, since: null, token: null, tag: null, json: false, retag: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--last")  args.last  = parseInt(argv[++i], 10);
@@ -41,6 +44,7 @@ function parseArgs(argv) {
     else if (a === "--token") args.token = String(argv[++i]).toLowerCase();
     else if (a === "--tag")   args.tag   = argv[++i];
     else if (a === "--json")  args.json  = true;
+    else if (a === "--retag") args.retag = true;
     else if (a === "--help" || a === "-h") { printHelp(); process.exit(0); }
   }
   return args;
@@ -54,25 +58,28 @@ Options:
   --since YYYY-MM-DD Filter by recorded_at >= date
   --token SYMBOL     Filter by pool_name substring (case-insensitive)
   --tag TAG          Filter by close_reason_tag
+  --retag            Re-derive tags from close_reason (corrects mis-tagged history)
   --json             Emit JSON instead of formatted text
   --help, -h         Show this help`);
 }
 
-// ─── Classifier fallback (matches lessons.js) ────────────────────
+// ─── Classifier fallback (kept in sync with lessons.js classifyCloseReason) ──────
+// Matches each cause by its characteristic syntax, strongest cause first, so a
+// leading "⚡ Trailing TP:" exit-alert banner can't hijack a stop/low-yield/OOR
+// close. See lessons.js for the full rationale.
 function classifyCloseReason(reasonText) {
   const t = String(reasonText || "").toLowerCase();
   if (!t) return "agent_decision";
-  if (/\bstop[\s_-]?loss\b|\bsl\b/.test(t))                return "stop_loss";
-  if (/\btake[\s_-]?profit\b|\btp\b/.test(t))              return "take_profit";
-  if (/pumped|above range|rule 3|run.*up.*range/.test(t))  return "pumped_above_range";
-  if (/dumped|below range|rule 6/.test(t))                 return "dumped_below_range";
-  if (/oor.*upside|out.of.range.*up|upside/.test(t))       return "oor_upside";
-  if (/oor.*downside|out.of.range.*down|downside/.test(t)) return "oor_downside";
-  if (/trailing/.test(t))                                  return "trailing_tp";
-  if (/oor|out.of.range|range/.test(t))                    return "oor_upside";
-  if (/low.yield|fee.{0,5}tvl/.test(t))                    return "low_yield";
-  if (/wash|rugpull|rug/.test(t))                          return "rug_filter";
-  if (/manual|user|telegram/.test(t))                      return "manual";
+  if (/pumped|above range|\brule 3\b|run.*up.*range/.test(t))   return "pumped_above_range";
+  if (/dumped|below range|\brule 6\b/.test(t))                  return "dumped_below_range";
+  if (/\bstop[\s_-]?loss\b/.test(t) && /<=|\bpnl\b\s*-?[\d.]+ ?%/.test(t)) return "stop_loss";
+  if (/low.?yield|fee.{0,5}tvl/.test(t))                        return "low_yield";
+  if (/out.of.range|\boor\b/.test(t))  return /down/.test(t) ? "oor_downside" : "oor_upside";
+  if (/wash|rugpull|rug/.test(t))                               return "rug_filter";
+  if (/peak\s*-?[\d.]+ ?%?\s*(→|->|to)\s*current|dropped\s*[\d.]+ ?%/.test(t) || /\btrailing\b/.test(t))
+    return "trailing_tp";
+  if (/\btake[\s_-]?profit\b|\btp\b/.test(t))                   return "take_profit";
+  if (/manual|user|telegram/.test(t))                           return "manual";
   return "agent_decision";
 }
 
@@ -297,9 +304,15 @@ function main() {
     process.exit(1);
   }
 
-  // Apply filters
-  let rows = all.slice();
+  // --retag: re-derive close_reason_tag for ALL rows from close_reason, overriding
+  // the persisted tag. Use this to correct history recorded by an older/buggy
+  // classifier (e.g. closes whose "⚡ Trailing TP:" banner mis-tagged a stop as
+  // trailing_tp). Does not mutate lessons.json — it only affects this report.
+  let rows = (args.retag
+    ? all.map((r) => ({ ...r, close_reason_tag: classifyCloseReason(r.close_reason) }))
+    : all.slice());
   const appliedFilters = [];
+  if (args.retag) appliedFilters.push("retag");
   if (args.since) {
     rows = rows.filter((r) => r.recorded_at && r.recorded_at >= args.since);
     appliedFilters.push(`since=${args.since}`);
