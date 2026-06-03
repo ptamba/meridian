@@ -568,6 +568,11 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const maxTvl = config.screening.maxTvl == null ? null : Number(config.screening.maxTvl);
   const minFeeActiveTvlRatio = Number(config.screening.minFeeActiveTvlRatio ?? 0);
 
+  // Otherwise-eligible candidates removed solely by a cooldown (they passed every
+  // quality gate above). Used after the sort to measure whether a cooldown
+  // removed a candidate that out-scored everything the LLM was shown.
+  const cooldownFiltered = [];
+
   const eligible = pools
     .filter((p) => {
       const tvl = Number(p.tvl ?? p.active_tvl ?? 0);
@@ -599,11 +604,13 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       if (isPoolOnCooldown(p.pool)) {
         log("screening", `Filtered cooldown pool ${p.name} (${p.pool.slice(0, 8)})`);
         pushFilteredReason(filteredOut, p, "pool cooldown active");
+        cooldownFiltered.push(p);
         return false;
       }
       if (isBaseMintOnCooldown(p.base?.mint)) {
         log("screening", `Filtered cooldown token ${p.base?.symbol} (${p.base?.mint?.slice(0, 8)})`);
         pushFilteredReason(filteredOut, p, "token cooldown active");
+        cooldownFiltered.push(p);
         return false;
       }
       return true;
@@ -621,6 +628,30 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       if (eligible.length < before) {
         log("screening", `PVP hard filter removed ${before - eligible.length} pool(s)`);
       }
+    }
+  }
+
+  // ── Cooldown opportunity-cost instrument (observational, no behavior change) ──
+  // Did a cooldown remove a candidate that out-scored everything the LLM was shown?
+  // cooldownFiltered candidates already passed every quality gate, so the only
+  // reason they're absent is the cooldown. Emit a structured, greppable line per
+  // cycle; analyze-cooldowns.js --opportunity-cost aggregates it.
+  if (cooldownFiltered.length > 0) {
+    const bestFiltered = cooldownFiltered.reduce((a, b) => (scoreCandidate(b) > scoreCandidate(a) ? b : a));
+    const bestFilteredScore = scoreCandidate(bestFiltered);
+    const bestEligible = eligible[0] || null;                 // top candidate the LLM was shown (already score-sorted)
+    const bestEligibleScore = bestEligible ? scoreCandidate(bestEligible) : 0;
+    const overtake = bestFilteredScore > bestEligibleScore;
+    const gap = Math.round(bestFilteredScore - bestEligibleScore);
+    log(
+      "cooldown-cost",
+      `filtered=${cooldownFiltered.length} ` +
+      `bestFiltered=${bestFiltered.base?.symbol || bestFiltered.name || "?"}:${Math.round(bestFilteredScore)} ` +
+      `bestEligible=${bestEligible ? (bestEligible.base?.symbol || bestEligible.name || "?") : "none"}:${Math.round(bestEligibleScore)} ` +
+      `overtake=${overtake} gap=${gap}`,
+    );
+    if (overtake) {
+      log("cooldown-cost_warn", `Cooldown removed the top-ranked candidate: ${bestFiltered.base?.symbol || bestFiltered.name} would have out-scored everything shown to the LLM (by ${gap})`);
     }
   }
 

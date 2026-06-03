@@ -22,6 +22,10 @@
  *      cooldown sources — repeat-deploy, OOR-streak, low-yield — the log line
  *      doesn't name the source).
  *   3. Deploy-time SKIPS where deploy_position refused because of a cooldown.
+ *   4. OPPORTUNITY COST — per screening cycle, whether a cooldown-filtered candidate
+ *      (which already passed every quality gate) out-scored the best option the LLM
+ *      was actually shown. This is the direct test of "did the cooldown force a worse
+ *      pick?" — needs the screening.js cooldown-cost instrument (logs "cooldown-cost").
  */
 
 import fs from "fs";
@@ -63,6 +67,8 @@ const FILT_POOL_RE  = /Filtered cooldown pool (.+?) \((\w+)\)/;
 // Deploy-time refusals
 const SKIP_MINT_RE  = /Base mint (\w+) is on cooldown .* skipping deploy for pool (\w+)/;
 const SKIP_POOL_RE  = /Pool (\w+) is on cooldown .* skipping/;
+// Opportunity-cost instrument (one per screening cycle that filtered a cooled candidate)
+const COST_RE = /filtered=(\d+) bestFiltered=(\S+?):(-?\d+) bestEligible=(\S+?):(-?\d+) overtake=(true|false) gap=(-?\d+)/;
 
 function inc(map, key, n = 1) { map.set(key, (map.get(key) || 0) + n); }
 function topEntries(map, n = 15) {
@@ -93,6 +99,9 @@ function main() {
   const skipsByKey = new Map();        // deploy-time refusals (any cooldown)
   let totalFiltered = 0, totalSkips = 0;
   let firstTs = null, lastTs = null;
+  // Opportunity-cost: per-cycle "did a cooled candidate out-rank everything shown to the LLM?"
+  let costCycles = 0, costOvertakes = 0, overtakeGapSum = 0;
+  const overtakeByToken = new Map();
 
   for (const file of files) {
     const text = fs.readFileSync(path.join(args.logs, file), "utf8");
@@ -115,6 +124,11 @@ function main() {
         // Keep one event per (second, mode); upgrade label to the readable name if seen.
         if (!prev) triggerEvents.set(key, { label: m[1], mode, isName });
         else if (isName && !prev.isName) { prev.label = m[1]; prev.isName = true; }
+        continue;
+      }
+      if ((m = msg.match(COST_RE))) {
+        costCycles++;
+        if (m[6] === "true") { costOvertakes++; overtakeGapSum += Number(m[7]); inc(overtakeByToken, m[2]); }
         continue;
       }
       if ((m = msg.match(FILT_TOKEN_RE))) { totalFiltered++; inc(filteredByToken, m[1]); continue; }
@@ -143,6 +157,13 @@ function main() {
     },
     screenerFilteredByCooldown: { total: totalFiltered, byToken: Object.fromEntries(topEntries(filteredByToken)) },
     deployTimeSkips: { total: totalSkips, byKey: Object.fromEntries(topEntries(skipsByKey)) },
+    opportunityCost: {
+      cyclesMeasured: costCycles,
+      overtakes: costOvertakes,
+      overtakeRate: costCycles ? costOvertakes / costCycles : null,
+      avgOvertakeGap: costOvertakes ? Math.round(overtakeGapSum / costOvertakes) : null,
+      byToken: Object.fromEntries(topEntries(overtakeByToken)),
+    },
   };
 
   if (args.json) { console.log(JSON.stringify(report, null, 2)); return; }
@@ -176,9 +197,31 @@ function main() {
   L.push(`   Total skips:      ${totalSkips}`);
   if (totalSkips) for (const [k, n] of topEntries(skipsByKey)) L.push(`     ${k.padEnd(28)} ${n}`);
   L.push("");
+  L.push("4. OPPORTUNITY COST — did a cooled candidate out-rank everything shown to the LLM?");
+  L.push("   (a cooled candidate already passed every quality gate; this asks if it would");
+  L.push("    have scored higher than the best option the LLM actually saw that cycle)");
+  L.push("-".repeat(78));
+  if (costCycles === 0) {
+    L.push("   No cooldown-cost data yet. Requires the screening.js instrument — pull + restart,");
+    L.push("   then let a few screening cycles run with cooled candidates present.");
+  } else {
+    const rate = (costOvertakes / costCycles) * 100;
+    L.push(`   Cycles measured:  ${costCycles}  (screening cycles that filtered ≥1 cooled candidate)`);
+    L.push(`   Overtakes:        ${costOvertakes}  (${rate.toFixed(0)}% of cycles — a cooled candidate out-scored the LLM's best option)`);
+    if (costOvertakes) {
+      L.push(`   Avg score gap:    ${Math.round(overtakeGapSum / costOvertakes)}  (how far the filtered candidate out-ranked the best shown)`);
+      L.push("   Most-blocked top candidates:");
+      for (const [tok, n] of topEntries(overtakeByToken)) L.push(`     ${tok.padEnd(28)} ${n}`);
+    }
+    L.push("");
+    L.push(`   READ: ${rate >= 25 ? "⚠️  the cooldown is frequently removing the single best candidate" : "the cooldown rarely removes the single best candidate"} —`);
+    L.push("   this is the direct evidence for whether the cooldown forced worse LLM picks.");
+  }
+  L.push("");
   L.push("  Note: only section 1 is attributable to the repeat-deploy (consecutive-streak)");
-  L.push("  filter specifically. Sections 2–3 bundle every cooldown source, because the");
-  L.push("  filter/skip log lines don't record which cooldown was active.");
+  L.push("  filter specifically. Sections 2–4 bundle every cooldown source (repeat-deploy +");
+  L.push("  OOR-streak + low-yield), because the filter lines don't record which was active —");
+  L.push("  though with 90/90 triggers in winners mode, repeat-deploy dominates the mix.");
   L.push("═".repeat(78));
   console.log(L.join("\n"));
 }
