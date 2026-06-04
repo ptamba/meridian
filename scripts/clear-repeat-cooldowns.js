@@ -25,7 +25,13 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPEAT_DEPLOY_RE = /repeat\s+(winners|losers)/i;
+// Repeat-DEPLOY cooldown reasons across code versions:
+//   "repeat winners (3x) — rotate-winners mode"
+//   "repeat losers (3x) — cut-losers mode"
+//   "repeat fee-generating deploys (3x)"   (legacy wording for the winners streak)
+// The leading "repeat\s+" (whitespace required) deliberately does NOT match the OOR
+// reason "repeated OOR closes (3x)" (no space after "repeat") or "low yield".
+const REPEAT_DEPLOY_RE = /repeat\s+(winners|losers|fee-generating)/i;
 
 function parseArgs(argv) {
   const args = { apply: false, file: path.join(__dirname, "..", "pool-memory.json") };
@@ -72,16 +78,18 @@ function main() {
   for (const c of cleared) {
     console.log(`  ${(c.active ? "ACTIVE " : "expired")}  ${c.label.padEnd(20)} ${c.kind.padEnd(9)} until ${c.until}  "${c.reason}"`);
   }
-  // Sanity: report what we deliberately KEPT, so it's obvious OOR/low-yield survive.
+  // Sanity: report what we deliberately KEPT (active status shown), so it's obvious
+  // OOR/low-yield survive — and so a stray active keep can't hide unnoticed.
   const kept = [];
   for (const [addr, entry] of Object.entries(db)) {
     if (!entry || typeof entry !== "object") continue;
-    if (entry.cooldown_until) kept.push(`${entry.name || addr.slice(0, 8)} pool "${entry.cooldown_reason}"`);
-    if (entry.base_mint_cooldown_until) kept.push(`${entry.name || addr.slice(0, 8)} base_mint "${entry.base_mint_cooldown_reason}"`);
+    const label = entry.name || addr.slice(0, 8);
+    if (entry.cooldown_until) kept.push({ label, kind: "pool", until: entry.cooldown_until, reason: entry.cooldown_reason, active: new Date(entry.cooldown_until).getTime() > nowMs });
+    if (entry.base_mint_cooldown_until) kept.push({ label, kind: "base_mint", until: entry.base_mint_cooldown_until, reason: entry.base_mint_cooldown_reason, active: new Date(entry.base_mint_cooldown_until).getTime() > nowMs });
   }
   if (kept.length) {
-    console.log(`\nKept (non-repeat-deploy) cooldowns: ${kept.length}`);
-    for (const k of kept) console.log(`  ${k}`);
+    console.log(`\nKept (non-repeat-deploy) cooldowns: ${kept.length}  (${kept.filter((k) => k.active).length} active)`);
+    for (const k of kept) console.log(`  ${(k.active ? "ACTIVE " : "expired")}  ${k.label.padEnd(20)} ${k.kind.padEnd(9)} "${k.reason}"`);
   }
 
   if (!cleared.length) {
