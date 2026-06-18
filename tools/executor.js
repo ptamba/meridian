@@ -14,7 +14,7 @@ import {
   closePosition,
   searchPools,
 } from "./dlmm.js";
-import { getWalletBalances, swapToken } from "./wallet.js";
+import { getWalletBalances, getSolBalance, swapToken } from "./wallet.js";
 import { studyTopLPers } from "./study.js";
 import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../lessons.js";
 import { setPositionInstruction } from "../state.js";
@@ -898,13 +898,13 @@ async function runSafetyChecks(name, args) {
 
       // Check SOL balance
       if (process.env.DRY_RUN !== "true") {
-        const balance = await getWalletBalances();
+        const sol = await getSolBalance();
         const gasReserve = config.management.gasReserve;
         const minRequired = amountY + gasReserve;
-        if (balance.sol < minRequired) {
+        if (sol < minRequired) {
           return {
             pass: false,
-            reason: `Insufficient SOL: have ${balance.sol} SOL, need ${minRequired} SOL (${amountY} deploy + ${gasReserve} gas reserve).`,
+            reason: `Insufficient SOL: have ${sol} SOL, need ${minRequired} SOL (${amountY} deploy + ${gasReserve} gas reserve).`,
           };
         }
       }

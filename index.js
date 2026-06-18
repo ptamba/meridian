@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
-import { getWalletBalances, swapToken, normalizeMint } from "./tools/wallet.js";
+import { getWalletBalances, getSolBalance, getHeldTokenMints, swapToken, normalizeMint } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
@@ -205,11 +205,27 @@ function stopCronJobs() {
 async function sweepOrphanTokens(openPositions = []) {
   if (!config.management.sweepOrphanTokensEnabled) return;
   try {
+    const positionMints = new Set(openPositions.map((p) => p.base_mint).filter(Boolean));
+
+    // Cheap pre-check: enumerate held SPL mints via RPC (far cheaper than the 100-credit
+    // Wallet API). If nothing is held outside SOL/USDC and open positions, there's nothing
+    // to sweep — skip the expensive USD-priced scan entirely (the common case). On RPC error
+    // getHeldTokenMints returns null → fall through to the full scan so we never silently
+    // stop sweeping.
+    const heldMints = await getHeldTokenMints();
+    if (heldMints !== null) {
+      const hasCandidate = [...heldMints].some((m) =>
+        normalizeMint(m) !== config.tokens.SOL &&
+        m !== config.tokens.USDC &&
+        !positionMints.has(m)
+      );
+      if (!hasCandidate) return;
+    }
+
     const balances = await getWalletBalances();
     const tokens = balances?.tokens || [];
     if (tokens.length === 0) return;
 
-    const positionMints = new Set(openPositions.map((p) => p.base_mint).filter(Boolean));
     const protectedMints = new Set([config.tokens.SOL, config.tokens.USDC]);
     // getWalletBalances returns native SOL in tokens[] too, and its mint is NOT the
     // wrapped-SOL mint — so a mint-only check misses it (it identifies SOL by symbol).
@@ -442,7 +458,9 @@ export async function runScreeningCycle({ silent = false } = {}) {
   let liveMessage = null;
   let screenReport = null;
   try {
-    [prePositions, preBalance] = await Promise.all([getMyPositions({ force: true }), getWalletBalances()]);
+    // Only .sol is read downstream (deploy sizing + gas-reserve gate), so use the cheap
+    // RPC getBalance (~1 credit) instead of the 100-credit Wallet API. Keep the { sol } shape.
+    [prePositions, preBalance] = await Promise.all([getMyPositions({ force: true }), getSolBalance().then((sol) => ({ sol }))]);
     if (prePositions.total_positions >= config.risk.maxPositions) {
       log("cron", `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions})`);
       screenReport = `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions}).`;
@@ -1420,7 +1438,7 @@ async function deployLatestCandidate(index) {
       throw new Error(`NO DEPLOY: only cached candidate ${candidate.name} is not worth deploying — ${skipReason}`);
     }
   }
-  const deployAmount = computeDeployAmount((await getWalletBalances()).sol);
+  const deployAmount = computeDeployAmount(await getSolBalance());
   const binsBelow = computeBinsBelow(candidate.volatility);
   const result = await executeTool("deploy_position", {
     pool_address: candidate.pool,

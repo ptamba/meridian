@@ -122,6 +122,57 @@ export async function getWalletBalances() {
 }
 
 /**
+ * Cheap SOL-only balance via the RPC `getBalance` method (~1 credit) instead of
+ * the 100-credit Helius Wallet API. Use this when a caller only needs native SOL
+ * (deploy sizing, gas-reserve safety check) and not the full token list / USD values.
+ *
+ * On error returns 0 — the safe direction: it under-states SOL, so deploy sizing
+ * floors out and the gas-reserve safety check blocks rather than over-deploys.
+ */
+export async function getSolBalance() {
+  try {
+    const lamports = await getConnection().getBalance(getWallet().publicKey, "confirmed");
+    return lamports / LAMPORTS_PER_SOL;
+  } catch (error) {
+    log("wallet_error", `getSolBalance failed: ${error.message}`);
+    return 0;
+  }
+}
+
+// SPL token programs — hardcoded to avoid pulling in @solana/spl-token as a dep.
+const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+const TOKEN_2022_PROGRAM_ID = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+
+/**
+ * Cheap RPC enumeration of SPL mints the wallet holds with a non-zero balance, via
+ * `getParsedTokenAccountsByOwner` (standard RPC — far cheaper than the 100-credit Helius
+ * Wallet API). Used as a pre-check so the orphan sweep only pays for the full USD-priced
+ * scan on the rare cycle that actually has a token to consider.
+ *
+ * Returns a Set of mint strings, or null on error — callers should treat null as
+ * "unknown, fall back to the full scan" so a transient RPC error never silently
+ * disables sweeping.
+ */
+export async function getHeldTokenMints() {
+  try {
+    const owner = getWallet().publicKey;
+    const conn = getConnection();
+    const mints = new Set();
+    for (const programId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
+      const res = await conn.getParsedTokenAccountsByOwner(owner, { programId });
+      for (const { account } of res.value) {
+        const info = account.data?.parsed?.info;
+        if (info?.mint && (info.tokenAmount?.uiAmount ?? 0) > 0) mints.add(info.mint);
+      }
+    }
+    return mints;
+  } catch (error) {
+    log("wallet_error", `getHeldTokenMints failed: ${error.message}`);
+    return null;
+  }
+}
+
+/**
  * Swap tokens via Jupiter Swap API V2 (order → sign → execute).
  */
 const SOL_MINT = "So11111111111111111111111111111111111111112";
