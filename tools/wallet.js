@@ -65,8 +65,8 @@ export async function getWalletBalances() {
 
   const HELIUS_KEY = process.env.HELIUS_API_KEY;
   if (!HELIUS_KEY) {
-    log("wallet_error", "HELIUS_API_KEY not set in .env");
-    return { wallet: walletAddress, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Helius API key missing" };
+    // No enhanced Wallet API available — compose from RPC instead of failing.
+    return getWalletBalancesViaRpc(walletAddress);
   }
 
   try {
@@ -107,17 +107,97 @@ export async function getWalletBalances() {
       total_usd: Math.round((data.totalUsdValue || 0) * 100) / 100,
     };
   } catch (error) {
-    log("wallet_error", error.message);
+    // Wallet API down/throttled (e.g. 429 on an exhausted HELIUS_API_KEY) — fall back to
+    // RPC composition so callers still get SOL + token list off the (separate) RPC_URL key.
+    log("wallet_warn", `Wallet API failed (${error.message}) — composing balances from RPC`);
+    return getWalletBalancesViaRpc(walletAddress);
+  }
+}
+
+/**
+ * Batch USD prices by mint via Jupiter Price API v3 (free, not Helius). Returns a
+ * { mint: priceUsd } map; missing/failed lookups are simply absent (best-effort).
+ */
+async function fetchUsdPrices(mints) {
+  const ids = [...new Set(mints.filter(Boolean))];
+  if (ids.length === 0) return {};
+  try {
+    const apiKey = getJupiterApiKey();
+    const res = await fetch(`${JUPITER_PRICE_API}?ids=${ids.join(",")}`, {
+      headers: apiKey ? { "x-api-key": apiKey } : {},
+    });
+    if (!res.ok) return {};
+    const data = await res.json();
+    const map = data?.data ?? data; // v3 is a flat { mint: {...} }; tolerate a {data} wrapper
+    const out = {};
+    for (const [mint, info] of Object.entries(map || {})) {
+      const p = info?.usdPrice ?? info?.price;
+      if (p != null && Number.isFinite(Number(p))) out[mint] = Number(p);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Fallback wallet balances composed entirely from RPC_URL primitives — used when the
+ * Helius enhanced Wallet API is unavailable or throttled. Returns the same shape as
+ * getWalletBalances(): SOL via getBalance, token list via getParsedTokenAccountsByOwner,
+ * USD via Jupiter (best-effort; usd is null for any mint Jupiter doesn't price).
+ *
+ * This removes the enhanced Wallet API as a hard dependency: /wallet, the LLM context,
+ * and the orphan sweep all keep working off the healthy RPC key when Helius is capped.
+ */
+async function getWalletBalancesViaRpc(walletAddress) {
+  try {
+    const conn = getConnection();
+    const owner = getWallet().publicKey;
+    const SOL = config.tokens.SOL;
+
+    const lamports = await conn.getBalance(owner, "confirmed");
+    const sol = lamports / LAMPORTS_PER_SOL;
+
+    const raw = [];
+    for (const programId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
+      const res = await conn.getParsedTokenAccountsByOwner(owner, { programId });
+      for (const { account } of res.value) {
+        const info = account.data?.parsed?.info;
+        const bal = info?.tokenAmount?.uiAmount ?? 0;
+        if (info?.mint && bal > 0) raw.push({ mint: info.mint, balance: bal });
+      }
+    }
+
+    const prices = await fetchUsdPrices([SOL, ...raw.map((t) => t.mint)]);
+    const solPrice = prices[SOL] ?? 0;
+    const solUsd = sol * solPrice;
+
+    const tokens = raw.map((t) => {
+      const price = prices[t.mint];
+      return {
+        mint: t.mint,
+        symbol: t.mint.slice(0, 8),
+        balance: t.balance,
+        usd: price != null ? Math.round(t.balance * price * 100) / 100 : null,
+      };
+    });
+
+    const usdcEntry = tokens.find((t) => t.mint === config.tokens.USDC);
+    const tokenUsd = tokens.reduce((s, t) => s + (t.usd || 0), 0);
+
     return {
       wallet: walletAddress,
-      sol: 0,
-      sol_price: 0,
-      sol_usd: 0,
-      usdc: 0,
-      tokens: [],
-      total_usd: 0,
-      error: error.message,
+      sol: Math.round(sol * 1e6) / 1e6,
+      sol_price: Math.round(solPrice * 100) / 100,
+      sol_usd: Math.round(solUsd * 100) / 100,
+      usdc: usdcEntry ? Math.round(usdcEntry.balance * 100) / 100 : 0,
+      tokens,
+      total_usd: Math.round((solUsd + tokenUsd) * 100) / 100,
+      source: "rpc-fallback",
     };
+  } catch (error) {
+    log("wallet_error", `RPC balance fallback failed: ${error.message}`);
+    return { wallet: walletAddress, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: error.message };
   }
 }
 
