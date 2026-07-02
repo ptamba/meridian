@@ -27,7 +27,7 @@ tools/
   executor.js       Tool dispatch: name → fn, safety checks, pre/post hooks
   dlmm.js           Meteora DLMM SDK wrapper (deploy, close, claim, positions, PnL)
   screening.js      Pool discovery from Meteora API
-  wallet.js         SOL/token balances (Helius) + Jupiter swap
+  wallet.js         SOL/token balances (Helius Wallet API, RPC fallback) + Jupiter swap
   token.js          Token info/holders/narrative (Jupiter API)
   study.js          Top LPer study via LPAgent API
 ```
@@ -60,9 +60,11 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 ## Config System
 
 `config.js` loads `user-config.json` at startup. Runtime mutations go through `update_config` tool (executor.js) which:
-- Updates the live `config` object immediately
-- Persists to `user-config.json`
+- Updates the live `config` object immediately (takes effect without restart)
+- Persists to `user-config.json` (`writeFileSync`) so the change survives restart — the file is written *first*, live object updated only after the persisted config is known-good
 - Restarts cron jobs if intervals changed
+
+**⚠️ user-config.json keys are FLAT top-level, not nested.** Despite the "Section" column below (which is *documentation grouping only*), `config.js` reads every user override as a flat lookup — e.g. `u.minMcap`, not `u.screening.minMcap` (see `config.js:63-99`). `update_config` writes them the same way (`userConfig[key] = val`, executor.js). If you hand-edit `user-config.json` and nest a key under `{"screening": {...}}`, it **silently falls back to the default with no error**. Always edit flat, or use `update_config` / `/config set` which writes the correct shape.
 
 **Valid config keys and their sections:**
 
@@ -155,7 +157,16 @@ Primary rug protection is the screener's wash/rugpull/bot-holder/concentration f
 3. **Close**: `close_position` → `recordPerformance()` in lessons.js → auto-swap base token to SOL → Telegram notify
 4. **Learn**: `evolveThresholds()` runs on performance data → updates config.screening → persists to user-config.json
 
-**Orphan-token sweep** (`index.js sweepOrphanTokens`): runs at the end of every management cycle as a safety net. The post-close auto-swap in `executor.js` can miss base tokens — manual/UI close (never ran `close_position`), OKX zap-out dust, or a timing race where the withdrawn token hadn't settled in the wallet when `close_position` checked balances (silent skip, no error logged). The sweep swaps any token NOT tied to an open position and worth ≥ `sweepMinUsd` back to SOL. **Protected (never swept):** SOL (native *and* wrapped) and USDC — matched by both `symbol` (`SOL`/`WSOL`/`USDC`) *and* `normalizeMint()`, because `getWalletBalances()` returns native SOL in `tokens[]` with a non-wrapped mint and identifies it only by symbol; a mint-only check would try to sweep the whole SOL balance into SOL. Open positions' `base_mint`s and null-mint entries are also skipped. Belt-and-suspenders: `swapToken()` refuses a same-mint swap outright. Gated on `sweepOrphanTokensEnabled`; no-op under DRY_RUN (swapToken early-returns, no notification).
+**Orphan-token sweep** (`index.js sweepOrphanTokens`): runs at the end of every management cycle as a safety net. The post-close auto-swap in `executor.js` can miss base tokens — manual/UI close (never ran `close_position`), OKX zap-out dust, or a timing race where the withdrawn token hadn't settled in the wallet when `close_position` checked balances (silent skip, no error logged). The sweep swaps any token NOT tied to an open position and worth ≥ `sweepMinUsd` back to SOL. **Protected (never swept):** SOL (native *and* wrapped) and USDC — matched by both `symbol` (`SOL`/`WSOL`/`USDC`) *and* `normalizeMint()`, because `getWalletBalances()` returns native SOL in `tokens[]` with a non-wrapped mint and identifies it only by symbol; a mint-only check would try to sweep the whole SOL balance into SOL. Open positions' `base_mint`s and null-mint entries are also skipped. Belt-and-suspenders: `swapToken()` refuses a same-mint swap outright. Gated on `sweepOrphanTokensEnabled`; no-op under DRY_RUN (swapToken early-returns, no notification). **Credit note:** the sweep no longer calls the 100-credit `getWalletBalances()` every cycle — it first runs a cheap RPC pre-check (`getHeldTokenMints`, `getParsedTokenAccountsByOwner`) and only pays for the full USD-priced scan when a non-SOL/USDC token outside open positions actually exists. On pre-check RPC error it falls through to the full scan (never silently stops sweeping).
+
+## Wallet-Balance Credit Cost (`tools/wallet.js`)
+
+The Helius **Wallet API** (`api.helius.xyz/v1/wallet/.../balances`, the `getWalletBalances` primary path) costs ~100 credits/call and is a **separate credential/quota from `RPC_URL`** (`HELIUS_API_KEY`). Exhausting it 429s *only* the balance-read surface — deploys/closes/PnL on `RPC_URL` keep working — which historically presented as "wallet gone" (a throttled read, never lost funds; verify via public RPC `getBalance` or Solscan). Two mitigations shipped:
+
+- **Cheap helpers for callers that don't need the full token list:** `getSolBalance()` (RPC `getBalance`, ~1 credit) is used by deploy sizing (`computeDeployAmount`), the deploy-time gas-reserve safety check, and the screening affordability gate — they only read `.sol`. `getHeldTokenMints()` (RPC `getParsedTokenAccountsByOwner`, both token programs) backs the orphan-sweep pre-check.
+- **RPC fallback:** when the Wallet API is absent or throws (429), `getWalletBalances()` composes the same-shaped result from RPC (`getBalance` + token accounts + Jupiter Price API v3 for USD, best-effort) instead of returning an error object. Fallback results carry `source: "rpc-fallback"`; in that mode token `symbol` is the mint prefix and `usd` may be `null` for mints Jupiter doesn't price (the sweep treats `usd: null` as below-threshold and skips). This removes the Wallet API as a hard dependency — `/wallet`, `/status`, `get_wallet_balance`, LLM context, and the sweep all keep working off `RPC_URL` when Helius is capped.
+
+Full-token callers that genuinely need the list (post-close/-claim auto-swap, `get_wallet_balance` tool, `/wallet`·`/status`, CLI, the agent's LLM-context snapshot in `agent.js`) still call `getWalletBalances()` — but the agent snapshot only fires on management cycles that need an *action* (not every quiet cycle), so it's no longer an unconditional per-cycle drain.
 
 ---
 
@@ -295,7 +306,7 @@ Use dry-run for: screener tuning, prompt validation, integration testing (OKX, H
 | `DRY_RUN` | No | Skip all on-chain transactions |
 | `HIVE_MIND_URL` | No | Collective intelligence server |
 | `HIVE_MIND_API_KEY` | No | Hive mind auth token |
-| `HELIUS_API_KEY` | No | Enhanced wallet balance data |
+| `HELIUS_API_KEY` | No | Enhanced wallet balance data (`getWalletBalances` primary path). Separate credential/quota from `RPC_URL` — when it's absent or throttled (429), `getWalletBalances` falls back to RPC composition (`getBalance` + `getParsedTokenAccountsByOwner` + Jupiter prices), tagged `source: "rpc-fallback"`. Not required for the bot to run |
 | `LPAGENT_API_KEY` | No | Direct LPAgent enrichment for accurate position PnL — without it, PnL falls back to Meteora's PnL API |
 | `JUPITER_API_KEY` | No | Jupiter Ultra rate-limit upgrade; public tier works without it |
 | `OKX_API_KEY` / `OK_ACCESS_KEY` | No | OKX OnchainOS — risk flags, bundle/sniper %, ATH price. Direct path (all 3 required keys set); falls back to Agent Meridian relay when absent |
