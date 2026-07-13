@@ -21,31 +21,17 @@
  *   --file     Path to lessons.json (default: ../lessons.json)
  */
 
+// Side-effect import: envcrypt.js calls loadEnv() at module load, decrypting
+// ./.env from the working dir into process.env — exactly as index.js does.
+// This is what makes RPC_URL available to the authority check.
+import "../envcrypt.js";
+
 import fs from "fs";
-import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import { matchGenre, checkAuthorities, GENRE_RULES } from "../tools/coin-filters.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// ─── Env bootstrap (mirror cli.js) ───────────────────────────────
-// The app decrypts RPC_URL from ~/.meridian/.env; a bare `node script.js`
-// doesn't see it. Load it the same way so the authority check has an RPC.
-async function bootstrapEnv() {
-  const meridianEnv = path.join(os.homedir(), ".meridian", ".env");
-  if (!fs.existsSync(meridianEnv)) return;
-  try {
-    const { loadEnv } = await import("../envcrypt.js");
-    loadEnv({
-      envPath: meridianEnv,
-      keyPath: path.join(os.homedir(), ".meridian", ".envrypt"),
-      override: false,
-    });
-  } catch (err) {
-    console.error(`(env bootstrap skipped: ${err.message})`);
-  }
-}
 
 function parseArgs(argv) {
   const a = { file: path.join(__dirname, "..", "lessons.json"), noRpc: false, since: null, json: false };
@@ -83,7 +69,6 @@ function summarizeBlocked(rows, totalCount) {
 
 async function main() {
   const args = parseArgs(process.argv);
-  if (!args.noRpc) await bootstrapEnv();
 
   if (!fs.existsSync(args.file)) {
     console.error(`No lessons.json at ${args.file}. Pass --file PATH (run on the VM where the data lives).`);
