@@ -25,6 +25,7 @@ import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../token-bla
 import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist.js";
 import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool } from "../smart-wallets.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
+import { matchGenre } from "./coin-filters.js";
 import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../config.js";
 import { getRecentDecisions } from "../decision-log.js";
 import fs from "fs";
@@ -781,6 +782,18 @@ async function runSafetyChecks(name, args) {
           pass: false,
           reason: `bin_step ${args.bin_step} is outside the allowed range of [${minStep}-${maxStep}].`,
         };
+      }
+
+      // Belt-and-suspenders: genre blacklist (primary gate is getTopCandidates,
+      // but catch direct/manual deploys of slow-rug genres too). No-op if name absent.
+      if (config.screening.genreBlacklistEnabled !== false) {
+        const genre = matchGenre(args.pool_name);
+        if (genre) {
+          return {
+            pass: false,
+            reason: `Refusing deploy: "${args.pool_name}" matches the ${genre.category} genre blacklist ("${genre.term}"). These slow-rug; disable with genreBlacklistEnabled:false to override.`,
+          };
+        }
       }
 
       const deployAmountY = Number(args.amount_y ?? args.amount_sol ?? 0);

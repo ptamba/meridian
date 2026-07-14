@@ -3,6 +3,7 @@ import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
+import { matchGenre } from "./coin-filters.js";
 import { confirmIndicatorPreset } from "./chart-indicators.js";
 import { getAgentMeridianBase, getAgentMeridianHeaders } from "./agent-meridian.js";
 
@@ -502,6 +503,15 @@ export async function discoverPools({
     if (p.dev && isDevBlocked(p.dev)) {
       log("dev_blocklist", `Filtered blocked deployer ${p.dev?.slice(0, 8)} token ${p.base?.symbol} in pool ${p.name}`);
       return false;
+    }
+    // Genre blacklist: slow-rug-prone narratives (political/celebrity/justice).
+    // Backtested net-positive tail insurance; disable with genreBlacklistEnabled:false.
+    if (s.genreBlacklistEnabled !== false) {
+      const genre = matchGenre(p.name || p.base?.symbol);
+      if (genre) {
+        log("blacklist", `Filtered genre coin (${genre.category}: "${genre.term}") ${p.base?.symbol} in pool ${p.name}`);
+        return false;
+      }
     }
     return true;
   });
