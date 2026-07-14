@@ -34,15 +34,41 @@ import { matchGenre, checkAuthorities, GENRE_RULES } from "../tools/coin-filters
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function parseArgs(argv) {
-  const a = { file: path.join(__dirname, "..", "lessons.json"), noRpc: false, since: null, json: false };
+  const a = { file: path.join(__dirname, "..", "lessons.json"), noRpc: false, since: null, json: false, stopSensitivity: false };
   for (let i = 2; i < argv.length; i++) {
     const v = argv[i];
     if (v === "--no-rpc") a.noRpc = true;
     else if (v === "--json") a.json = true;
+    else if (v === "--stop-sensitivity") a.stopSensitivity = true;
     else if (v === "--file") a.file = argv[++i];
     else if (v === "--since") a.since = argv[++i];
   }
   return a;
+}
+
+/**
+ * SAVINGS-SIDE-ONLY estimate of tightening the stop-loss.
+ * For each historical stop_loss close, assume a candidate stop level L would have
+ * capped the loss at ~L% (valid because PnL falls continuously to the stop, so it
+ * passed through L on the way down). This is an UPPER BOUND on the clawback — it
+ * does NOT count winners that dipped below L and recovered (the false-positive
+ * cost), which needs max_drawdown_pct (now being recorded going forward).
+ */
+function stopSensitivity(rows, levels = [-13, -12, -11, -10]) {
+  const stops = rows.filter((r) => r.close_reason_tag === "stop_loss" && r.pnl_pct != null);
+  const initialOf = (r) =>
+    r.initial_value_usd != null ? r.initial_value_usd
+    : (r.pnl_pct ? Math.abs(r.pnl_usd / (r.pnl_pct / 100)) : 0);
+  const actualTotal = stops.reduce((s, r) => s + (r.pnl_usd || 0), 0);
+  const out = { count: stops.length, actualTotalUsd: actualTotal, levels: [] };
+  for (const L of levels) {
+    let saved = 0;
+    for (const r of stops) {
+      if (r.pnl_pct < L) saved += initialOf(r) * (L - r.pnl_pct) / 100; // (L - P) > 0
+    }
+    out.levels.push({ level: L, clawbackUsd: saved, newTotalUsd: actualTotal + saved });
+  }
+  return out;
 }
 
 const money = (n) => (n < 0 ? "-$" : "$") + Math.abs(n).toFixed(2);
@@ -126,6 +152,8 @@ async function main() {
     },
   };
 
+  if (args.stopSensitivity) report.stopSensitivity = stopSensitivity(rows);
+
   if (args.json) { console.log(JSON.stringify(report, null, 2)); return; }
 
   // ── Text report ──
@@ -163,6 +191,21 @@ async function main() {
 
   printFilter("MINT / FREEZE AUTHORITY NOT REVOKED", report.filters.authority, report.filters.authority.note);
   printFilter("COMBINED (union, deduped)", report.filters.combined);
+
+  if (report.stopSensitivity) {
+    const ss = report.stopSensitivity;
+    console.log("STOP-LOSS SENSITIVITY  (⚠ SAVINGS-SIDE ONLY — upper bound)");
+    console.log(line);
+    console.log(`  ${ss.count} stop-loss closes, actual total ${money(ss.actualTotalUsd)}`);
+    console.log(`  counterfactual if the stop had been tighter:`);
+    for (const l of ss.levels) {
+      console.log(`    stop ${String(l.level).padStart(3)}%  →  total ${money(l.newTotalUsd)}   (clawback +${l.clawbackUsd.toFixed(2)})`);
+    }
+    console.log(`  ⚠ Does NOT subtract winners that would be falsely stopped (dipped past`);
+    console.log(`    the level then recovered). That needs max_drawdown_pct — now being`);
+    console.log(`    recorded. Re-run in ~2 weeks for the real, two-sided answer.`);
+    console.log();
+  }
 
   console.log("NOTE: creator≠minter and dev-% filters are NOT in this run —");
   console.log("  creator≠minter needs a first-buyer source (phase 2); dev-% isn't");

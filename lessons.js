@@ -177,6 +177,8 @@ export async function recordPerformance(perf) {
     pnl_usd: Math.round(pnl_usd * 100) / 100,
     pnl_pct: Math.round(pnl_pct * 100) / 100,
     range_efficiency: Math.round(range_efficiency * 10) / 10,
+    peak_pnl_pct: perf.peak_pnl_pct != null ? Math.round(perf.peak_pnl_pct * 100) / 100 : null,
+    max_drawdown_pct: perf.max_drawdown_pct != null ? Math.round(perf.max_drawdown_pct * 100) / 100 : null,
     recorded_at: new Date().toISOString(),
   };
 

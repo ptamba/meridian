@@ -95,6 +95,7 @@ export function trackPosition({
     closed_at: null,
     notes: [],
     peak_pnl_pct: 0,
+    min_pnl_pct: 0,
     pending_peak_pnl_pct: null,
     pending_peak_started_at: null,
     pending_trailing_current_pnl_pct: null,
@@ -374,6 +375,16 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   const state = load();
   const pos = state.positions[position_address];
   if (!pos || pos.closed) return null;
+
+  // Track running max-drawdown (most-negative trustworthy PnL) for the life of
+  // the position. Instrumentation only — persisted at close so we can backtest
+  // stop-level / early-exit changes against real intra-hold paths (which the
+  // final close value alone can't answer). Guarded by pnl_pct_suspicious so a
+  // corrupted tick doesn't overstate the drawdown.
+  if (!pnl_pct_suspicious && currentPnlPct != null && currentPnlPct < (pos.min_pnl_pct ?? 0)) {
+    pos.min_pnl_pct = currentPnlPct;
+    save(state);
+  }
 
   if (pos.confirmed_trailing_exit_until) {
     if (new Date(pos.confirmed_trailing_exit_until).getTime() > Date.now() && pos.confirmed_trailing_exit_reason) {
