@@ -249,9 +249,13 @@ const actualBaseFee = baseFactor > 0
 ## Model Configuration
 
 - Provider endpoint: `LLM_BASE_URL` env (default `https://openrouter.ai/api/v1`); set per-cycle model with `LLM_MODEL` env or per-role keys in user-config.json.
-- Default model: `process.env.LLM_MODEL` or `openrouter/healer-alpha`
-- Fallback on 502/503/529: `stepfun/step-3.5-flash:free` (2nd attempt), then retry
-- Per-role models: `managementModel`, `screeningModel`, `generalModel` in user-config.json — precedence: user-config > `LLM_MODEL` > built-in default
+- **⚠️ Env beats user-config.json.** `config.js:45-47` uses `||=` for `llmModel`/`llmBaseUrl`/`llmApiKey`, so those JSON keys apply *only* when the matching `LLM_MODEL`/`LLM_BASE_URL`/`LLM_API_KEY` env var is unset. Editing the model in user-config.json while a stale env var is present **silently does nothing**. Clear both places when switching providers.
+- **⚠️ API key resolution:** `agent.js:98` reads `LLM_API_KEY || OPENROUTER_API_KEY` — `LLM_API_KEY` wins. `config.js` performs **no** key validation and nothing throws, so a leftover `LLM_API_KEY` from a previous provider surfaces as an auth failure against the new endpoint, not as a config error.
+- **⚠️ Model IDs are route-specific.** OpenRouter requires the vendor prefix (`deepseek/deepseek-v4-flash`); a vendor's own API takes the bare ID (`deepseek-v4-flash`). A bare ID in config is the tell that `LLM_BASE_URL` points at a first-party endpoint rather than OpenRouter.
+- **⚠️ Built-in defaults are delisted (verified 2026-09-01).** `config.js:194-196` falls back to `openrouter/healer-alpha` (management/general) and `openrouter/hunter-alpha` (screening); neither is listed on OpenRouter any more. The bot only runs because user-config.json overrides them.
+- **⚠️ Fallback model is dead.** `agent.js:198` hardcodes `stepfun/step-3.5-flash:free` for the 502/503/529 retry — also delisted, so that recovery path 404s instead of recovering. Needs a live cheap tool-calling model (e.g. `z-ai/glm-4.7-flash`).
+- Per-role models: `managementModel`, `screeningModel`, `generalModel` in user-config.json — precedence: user-config > `LLM_MODEL` > built-in default. These override `llmModel`, so **all three** need the correct prefix when switching routes.
+- Cost structure differs by route: DeepSeek's first-party API prices by time of day (peak 01:00–04:00 and 06:00–10:00 UTC Mon–Fri, off-peak exactly half), while OpenRouter is flat 24/7. Per-role split is the main cost lever — management runs ~3x more often than screening but mostly narrates decisions `getDeterministicCloseRule` already made, while screening is the call where a bad judgment costs real money.
 - Provider examples:
   - LM Studio: `LLM_BASE_URL=http://localhost:1234/v1`, `LLM_API_KEY=lm-studio`
   - DeepSeek: `LLM_BASE_URL=https://api.deepseek.com/v1`, model `deepseek-v4-flash` or `deepseek-v4-pro`
@@ -302,7 +306,7 @@ Use dry-run for: screener tuning, prompt validation, integration testing (OKX, H
 |-----|----------|---------|
 | `WALLET_PRIVATE_KEY` | Yes | Base58 or JSON array private key |
 | `RPC_URL` | Yes | Solana RPC endpoint |
-| `OPENROUTER_API_KEY` | Yes | LLM API key |
+| `OPENROUTER_API_KEY` | Yes* | LLM API key. *Not actually enforced: `config.js` validates no keys and `LLM_API_KEY` takes precedence (`agent.js:98`). Only required when routing through OpenRouter |
 | `TELEGRAM_BOT_TOKEN` | No | Telegram notifications |
 | `TELEGRAM_CHAT_ID` | No | Telegram chat target |
 | `TELEGRAM_THREAD_ID` | No | Forum supergroup topic id — scopes inbound + outbound to that thread |
@@ -328,3 +332,5 @@ Use dry-run for: screener tuning, prompt validation, integration testing (OKX, H
 
 - `lessons.js evolveThresholds()` evolves `maxVolatility` + `minFeeTvlRatio` (wrong key names — should be `minFeeActiveTvlRatio`; `maxVolatility` doesn't exist in config at all). The evolution is a no-op for those keys.
 - `get_wallet_positions` tool (dlmm.js) is in definitions.js but not in MANAGER_TOOLS or SCREENER_TOOLS — only available in GENERAL role.
+- `agent.js:198` hardcodes `stepfun/step-3.5-flash:free` as the 502/503/529 fallback model. Delisted from OpenRouter (verified 2026-09-01) — that recovery path now 404s instead of recovering.
+- `config.js:194-196` built-in default models (`openrouter/healer-alpha`, `openrouter/hunter-alpha`) are both delisted. Nothing validates them at startup; the bot only runs because user-config.json overrides them.
