@@ -90,6 +90,7 @@ import { config } from "./config.js";
 import { getStateSummary } from "./state.js";
 import { getLessonsForPrompt, getPerformanceSummary } from "./lessons.js";
 import { getDecisionSummary } from "./decision-log.js";
+import { sendMessage } from "./telegram.js";
 
 // Supports OpenRouter (default) or any OpenAI-compatible local server (e.g. LM Studio)
 // To use LM Studio: set LLM_BASE_URL=http://localhost:1234/v1 and LLM_API_KEY=lm-studio in .env
@@ -235,7 +236,10 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
           }
           throw error;
         }
-        if (response.choices?.length) break;
+        if (response.choices?.length) {
+          noteLlmRecovered();
+          break;
+        }
         const errCode = response.error?.code;
         if (errCode === 502 || errCode === 503 || errCode === 529) {
           const wait = (attempt + 1) * 5000;
@@ -395,6 +399,9 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
     } catch (error) {
       log("error", `Agent loop error at step ${step}: ${error.message}`);
 
+      // Out of credit / bad key — alert once per outage. Retrying won't help.
+      if (error.status === 401 || error.status === 402) noteLlmOutage(error);
+
       // If it's a rate limit, wait and retry
       if (error.status === 429) {
         log("agent", "Rate limited, waiting 30s...");
@@ -409,6 +416,27 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
 
   log("agent", "Max steps reached without final answer");
   return { content: "Max steps reached. Review logs for partial progress.", userMessage: goal };
+}
+
+// One Telegram alert per LLM credit/auth outage, plus one on recovery. A 402 on
+// DeepSeek went unnoticed for 9h (2026-07-17) and 16h (2026-08-20).
+let _llmOutage = false;
+
+function noteLlmOutage(error) {
+  if (_llmOutage) return;
+  _llmOutage = true;
+  sendMessage(
+    `⚠️ LLM unavailable — ${error.status} ${String(error.message).slice(0, 120)}\n` +
+    `Screening is paused. Exits (stop loss / TP / OOR / low yield) still run without the LLM.\n` +
+    `Top up the provider balance or fix the API key.`
+  ).catch(() => {});
+}
+
+function noteLlmRecovered() {
+  if (!_llmOutage) return;
+  _llmOutage = false;
+  log("agent", "LLM reachable again after credit/auth outage");
+  sendMessage("✅ LLM reachable again — screening resumed.").catch(() => {});
 }
 
 function sleep(ms) {
