@@ -189,7 +189,7 @@ claude
 | Command | What it does |
 |---|---|
 | `/screen` | Full AI screening cycle — checks Discord queue, reads config, fetches candidates, runs deep research, and deploys if a winner is found |
-| `/manage` | Full AI management cycle — checks all positions, evaluates PnL, claims fees, closes OOR/losing positions |
+| `/manage` | Management cycle — checks all positions against the close rules, then closes and claims directly (no LLM). The LLM is only asked about positions you set an instruction on |
 | `/balance` | Check wallet SOL and token balances |
 | `/positions` | List all open DLMM positions with range status |
 | `/candidates` | Fetch and enrich top pool candidates (pool metrics + token audit + smart money) |
@@ -279,7 +279,7 @@ meridian withdraw-liquidity --position <addr> --pool <addr> [--bps 10000]
 
 ```bash
 meridian screen [--dry-run] [--silent]   # one AI screening cycle
-meridian manage [--dry-run] [--silent]   # one AI management cycle
+meridian manage [--dry-run] [--silent]   # one management cycle (rule-based closes, no LLM)
 meridian start [--dry-run]               # start autonomous agent with cron jobs
 ```
 
@@ -397,7 +397,7 @@ Add known rug/farm deployer wallet addresses to `deployer-blacklist.json`:
 ### Notifications
 
 Meridian sends notifications automatically for:
-- Management cycle reports (reasoning + decisions)
+- Management cycle reports (position table + actions taken)
 - Screening cycle reports (what it found, whether it deployed)
 - OOR alerts when a position leaves range past `outOfRangeWaitMinutes`
 - Deploy: pair, amount, position address, tx hash
@@ -508,9 +508,11 @@ Every key above can be overridden via env var (`DEPLOY_RELAY_SLIPPAGE_BPS`, `LIQ
 
 | Field | Default | Description |
 |---|---|---|
-| `managementModel` | `openai/gpt-oss-20b:free` | LLM for management cycles |
-| `screeningModel` | `openai/gpt-oss-20b:free` | LLM for screening cycles |
-| `generalModel` | `openai/gpt-oss-20b:free` | LLM for REPL / chat |
+| `managementModel` | `LLM_MODEL`, else `openrouter/healer-alpha` | LLM for instruction positions and the hourly health check (rule-based closes don't use it) |
+| `screeningModel` | `LLM_MODEL`, else `openrouter/hunter-alpha` | LLM for screening cycles |
+| `generalModel` | `LLM_MODEL`, else `openrouter/healer-alpha` | LLM for REPL / chat |
+
+> The built-in fallbacks (`openrouter/healer-alpha`, `openrouter/hunter-alpha`) are no longer listed on OpenRouter. Always set `LLM_MODEL` or all three keys. Model IDs depend on the endpoint: OpenRouter needs the vendor prefix (`deepseek/deepseek-v4-flash`), while a vendor's own API takes the bare ID.
 
 > Override model at runtime: `node cli.js config set screeningModel anthropic/claude-opus-4-5`
 
@@ -540,7 +542,9 @@ Security notes:
 - If `TELEGRAM_THREAD_ID` is set (forum-enabled supergroup topic id), the bot posts only into that topic and only accepts inbound messages from it. Leave blank for non-forum chats.
 
 **Notifications sent:**
-- After every management cycle: full agent report (reasoning + decisions)
+- After every management cycle: position table + actions taken (closes, claims, failures)
+- Every close, with PnL and reason, including closes made by the 30s PnL poller between cycles
+- LLM credit/auth outage (401/402) and recovery — one message each
 - After every screening cycle: full agent report (what it found, whether it deployed)
 - When a position goes out of range past `outOfRangeWaitMinutes`
 - On deploy: pair, amount, position address, tx hash
@@ -669,13 +673,21 @@ LLM_API_KEY=lm-studio
 LLM_MODEL=your-local-model-name
 ```
 
+**OpenRouter (recommended)**
+```env
+LLM_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_API_KEY=sk-or-...
+LLM_MODEL=deepseek/deepseek-v4-flash
+```
+Hosts on OpenRouter publish one price per model, with no time-of-day pricing. Leave `LLM_API_KEY` unset: if both are set, `LLM_API_KEY` wins, and a leftover key from another provider fails with an auth error.
+
 **DeepSeek (api.deepseek.com)**
 ```env
 LLM_BASE_URL=https://api.deepseek.com/v1
 LLM_API_KEY=sk-your_deepseek_key
 LLM_MODEL=deepseek-v4-flash     # or deepseek-v4-pro
 ```
-DeepSeek reasoner / thinking mode is supported — the agent detects the "thinking mode does not support tool_choice" rejection and retries without `tool_choice` for the rest of the run. No extra config needed.
+DeepSeek's own API prices by time of day: peak is 01:00–04:00 and 06:00–10:00 UTC on weekdays, at double the off-peak rate. It has also retired V4-Flash there, so `deepseek-v4-flash` is now served by V4.1-Flash at V4.1 prices. DeepSeek reasoner / thinking mode is supported — the agent detects the "thinking mode does not support tool_choice" rejection and retries without `tool_choice` for the rest of the run. No extra config needed.
 
 **OpenAI**
 ```env
@@ -699,6 +711,12 @@ A single `fetch failed` at startup is normal — the poll loop retries every 5s.
 **`[OKX] advanced-info unavailable for ...`** — OKX enrichment couldn't be fetched. The bot continues with weaker risk signals. Either ignore (fine for most users) or set `OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE` / **`OKX_PROJECT_ID`** in `.env` to use the direct OKX OnchainOS path; without them the bot falls back to the Agent Meridian public relay which may rate-limit on fresh tokens. The Project ID header is required for `/api/v6/dex/market/...` endpoints — without it OKX returns 50114 "Invalid Authority" even with valid credentials.
 
 **OKX 401 with `{"msg":"Invalid Authority","code":"50114"}`** in error body — credentials are otherwise valid but one of: (1) the key was issued from the CEX portal at www.okx.com instead of the Web3 portal at web3.okx.com → wrong scope, recreate at web3.okx.com; (2) `OKX_PROJECT_ID` env is missing → add it from the Web3 dashboard's project page; (3) the key was created under a *different* project than the Project ID you set → match them up. Verify with a hand-rolled request to `/api/v6/dex/market/token/advanced-info?chainIndex=501&tokenContractAddress=So11111111111111111111111111111111111111112` (using SOL bypasses any per-token gating).
+
+**OKX 401 with `{"msg":"Your API key or regions have no access to current services","code":"50125"}`** on the `/api/v6/dex/market/...` endpoints. Your signature is fine (that's 50114); this is an access problem. Either the key or project has lost Market API access, or the server's region is restricted. Check the key in the Web3 portal, then try the same keys from a machine in another region. The bot keeps running: the OKX risk check uses a public endpoint, so the wash-trading filter and rugpull flag still work. Only bundle/sniper %, ATH distance and holder clusters are missing.
+
+**`402 Insufficient Balance` / `Agent loop error ... 402`**: your LLM provider's prepaid balance is empty. Rule-based exits (stop loss, take profit, out of range, low yield) still run because they don't use the LLM. Screening, instruction evaluation and chat stop until you top up. Telegram gets one "⚠️ LLM unavailable" alert per outage and a "✅ LLM reachable again" when it recovers. An auth problem (bad or missing key) shows as `401` and triggers the same alert.
+
+**`SyntaxError: Expected double-quoted property name in JSON` at startup**: `user-config.json` contains a comment (`#` or `//`) or another JSON syntax error. JSON has no comments, so delete the line instead of commenting it out. Check with `node -e 'JSON.parse(require("fs").readFileSync("user-config.json","utf8"));console.log("valid")'`.
 
 **LPAgent `HTTP 429 for owner ...`** — only happens in tight bursts before the 30-second cache absorbs them. Increase `LPAGENT_CACHE_TTL_MS` env (e.g. to 60000) if you still see them. PnL data 30–60 seconds stale doesn't affect management decisions.
 
