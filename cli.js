@@ -66,7 +66,7 @@ Output: { done: true, report: "..." }
 \`\`\`
 
 ### meridian manage [--dry-run] [--silent]
-Runs one AI management cycle over open positions.
+Runs one management cycle over open positions. Rule-based closes and claims run directly; the LLM is only used for positions with an instruction.
 \`\`\`
 Output: { done: true, report: "..." }
 \`\`\`
